@@ -1,0 +1,164 @@
+/*
+ * Theme tokens. Values are "R G B" triplets consumed by tailwind.config.js as
+ * rgb(var(--c-x) / <alpha>). Switch theme with <html data-theme="light|dark">
+ * and accent with <html data-accent="lavender|mint|sky|peach|butter">.
+ *
+ * Pastel families each have three steps:
+ *   -soft   soft fill (chips, tiles, avatars)
+ *   -strong saturated pastel (bars, dots, chart series, progress fills)
+ *   -ink    text colour that passes WCAG AA on top of -soft and on the surface
+ */
+
+:root,
+[data-theme='light'] {
+  color-scheme: light;
+
+  --c-bg: 248 247 253;
+  --c-surface: 255 255 255;
+  --c-surface-2: 243 241 250;
+  --c-line: 230 227 240;
+  --c-ink: 43 40 64;
+  --c-muted: 97 92 122;
+  --c-faint: 122 117 144;
+
+  --c-mint-soft: 217 245 230;
+  --c-mint-strong: 92 196 151;
+  --c-mint-ink: 31 107 74;
+
+  --c-sky-soft: 220 235 252;
+  --c-sky-strong: 106 174 234;
+  --c-sky-ink: 29 90 143;
+
+  --c-peach-soft: 255 228 214;
+  --c-peach-strong: 245 162 122;
+  --c-peach-ink: 138 69 36;
+
+  --c-lavender-soft: 236 230 251;
+  --c-lavender-strong: 166 139 235;
+  --c-lavender-ink: 91 63 168;
+
+  --c-butter-soft: 255 243 199;
+  --c-butter-strong: 242 201 76;
+  --c-butter-ink: 122 91 0;
+
+  --c-coral-soft: 255 224 224;
+  --c-coral-strong: 242 139 130;
+  --c-coral-ink: 154 58 51;
+
+  --c-grey-soft: 238 240 244;
+  --c-grey-strong: 163 170 184;
+  --c-grey-ink: 75 82 98;
+
+  --shadow-soft: 0 1px 2px rgb(43 40 64 / 0.04), 0 8px 24px rgb(43 40 64 / 0.06);
+  --shadow-lift: 0 2px 4px rgb(43 40 64 / 0.06), 0 16px 40px rgb(43 40 64 / 0.12);
+}
+
+[data-theme='dark'] {
+  color-scheme: dark;
+
+  --c-bg: 20 24 38;
+  --c-surface: 28 33 51;
+  --c-surface-2: 36 42 63;
+  --c-line: 50 58 85;
+  --c-ink: 232 233 243;
+  --c-muted: 169 174 198;
+  --c-faint: 140 146 173;
+
+  --c-mint-soft: 30 59 51;
+  --c-mint-strong: 92 196 151;
+  --c-mint-ink: 155 230 196;
+
+  --c-sky-soft: 29 50 80;
+  --c-sky-strong: 106 174 234;
+  --c-sky-ink: 169 207 245;
+
+  --c-peach-soft: 67 48 42;
+  --c-peach-strong: 245 162 122;
+  --c-peach-ink: 255 195 166;
+
+  --c-lavender-soft: 47 41 80;
+  --c-lavender-strong: 166 139 235;
+  --c-lavender-ink: 205 189 247;
+
+  --c-butter-soft: 64 58 34;
+  --c-butter-strong: 242 201 76;
+  --c-butter-ink: 247 223 138;
+
+  --c-coral-soft: 71 40 43;
+  --c-coral-strong: 242 139 130;
+  --c-coral-ink: 255 179 173;
+
+  --c-grey-soft: 42 48 69;
+  --c-grey-strong: 125 132 155;
+  --c-grey-ink: 195 200 218;
+
+  --shadow-soft: 0 1px 2px rgb(0 0 0 / 0.25), 0 8px 24px rgb(0 0 0 / 0.25);
+  --shadow-lift: 0 2px 4px rgb(0 0 0 / 0.3), 0 16px 40px rgb(0 0 0 / 0.4);
+}
+
+/* ---- Accent presets (Settings → Accent) ---- */
+/* --c-accent is the primary button fill; --c-on-accent is the text on it (AA). */
+
+:root,
+[data-accent='lavender'] {
+  --c-accent: 109 79 209;
+  --c-accent-soft: 236 230 251;
+  --c-accent-ink: 91 63 168;
+  --c-on-accent: 255 255 255;
+}
+[data-accent='mint'] {
+  --c-accent: 26 127 90;
+  --c-accent-soft: 217 245 230;
+  --c-accent-ink: 31 107 74;
+  --c-on-accent: 255 255 255;
+}
+[data-accent='sky'] {
+  --c-accent: 37 99 168;
+  --c-accent-soft: 220 235 252;
+  --c-accent-ink: 29 90 143;
+  --c-on-accent: 255 255 255;
+}
+[data-accent='peach'] {
+  --c-accent: 176 78 36;
+  --c-accent-soft: 255 228 214;
+  --c-accent-ink: 138 69 36;
+  --c-on-accent: 255 255 255;
+}
+[data-accent='butter'] {
+  --c-accent: 133 99 0;
+  --c-accent-soft: 255 243 199;
+  --c-accent-ink: 122 91 0;
+  --c-on-accent: 255 255 255;
+}
+
+[data-theme='dark'][data-accent='lavender'],
+[data-theme='dark']:not([data-accent]) {
+  --c-accent: 185 163 245;
+  --c-accent-soft: 47 41 80;
+  --c-accent-ink: 205 189 247;
+  --c-on-accent: 28 22 51;
+}
+[data-theme='dark'][data-accent='mint'] {
+  --c-accent: 125 220 178;
+  --c-accent-soft: 30 59 51;
+  --c-accent-ink: 155 230 196;
+  --c-on-accent: 16 40 32;
+}
+[data-theme='dark'][data-accent='sky'] {
+  --c-accent: 140 192 245;
+  --c-accent-soft: 29 50 80;
+  --c-accent-ink: 169 207 245;
+  --c-on-accent: 16 30 52;
+}
+[data-theme='dark'][data-accent='peach'] {
+  --c-accent: 250 180 145;
+  --c-accent-soft: 67 48 42;
+  --c-accent-ink: 255 195 166;
+  --c-on-accent: 50 25 15;
+}
+[data-theme='dark'][data-accent='butter'] {
+  --c-accent: 242 210 110;
+  --c-accent-soft: 64 58 34;
+  --c-accent-ink: 247 223 138;
+  --c-on-accent: 45 35 5;
+}
