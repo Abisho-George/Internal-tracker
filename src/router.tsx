@@ -1,4 +1,4 @@
-import { Navigate, Outlet, createBrowserRouter, useLocation, type RouteObject } from 'react-router-dom';
+import { Navigate, Outlet, createBrowserRouter, createHashRouter, useLocation, type RouteObject } from 'react-router-dom';
 import { useCurrentUser } from '@/store';
 import { AppShell } from '@/layouts/AppShell';
 import { RouteError } from '@/layouts/RouteError';
@@ -81,7 +81,7 @@ export const routes: RouteObject[] = [
   },
 ];
 
-export const router = createBrowserRouter(routes, {
+export const router = (import.meta.env.VITE_HASH_ROUTER ? createHashRouter : createBrowserRouter)(routes, {
   future: {
     v7_relativeSplatPath: true,
     v7_fetcherPersist: true,
