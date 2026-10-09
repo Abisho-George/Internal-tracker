@@ -6,7 +6,9 @@ import { Avatar, Btn, cx, input, safe } from '../ui';
 
 /** Onboard a new project: name, dates and how many hours a day each person gives it. */
 export function ProjectSetup({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const { me, createProject } = useStore();
+  const { me, proposeProject } = useStore();
+  const lead = ['manager', 'founder'].includes(PEOPLE.find((p) => p.id === me)?.role ?? '');
+  const [description, setDescription] = useState('');
   const [name, setName] = useState('');
   const [client, setClient] = useState('');
   const [startDate, setStart] = useState(day(0));
@@ -14,25 +16,26 @@ export function ProjectSetup({ open, onClose }: { open: boolean; onClose: () => 
   const [hours, setHours] = useState<Record<string, number>>({});
   const [err, setErr] = useState('');
   const team = PEOPLE.filter((p) => p.role === 'resource' || p.role === 'pm');
+  void day;
 
   return (
     <Modal
       open={open}
       onClose={onClose}
-      title="Onboard a new project"
+      title={lead ? "Onboard a new project" : "Propose a new project"}
+      description={lead ? undefined : "Once a manager or founder approves it, you own it and can assign tasks."}
       size="lg"
       footer={
         <Btn
           onClick={() => {
-            const pmId = PEOPLE.find((p) => p.id === me)?.role === 'pm' ? me : 'meera';
-            if (safe(() => createProject({ name, client, startDate, endDate, hours, pmId }), setErr)) {
-              toast({ title: `${name} is live 🎉`, tone: 'celebrate' });
-              setName(''); setClient(''); setHours({}); setErr('');
+            if (safe(() => proposeProject({ name, client, description, startDate, endDate, hours }), setErr)) {
+              toast({ title: lead ? `${name} is live 🎉` : `${name} sent to management for approval`, tone: 'success' });
+              setName(''); setClient(''); setDescription(''); setHours({}); setErr('');
               onClose();
             }
           }}
         >
-          Create project
+          {lead ? 'Create project' : 'Send for approval'}
         </Btn>
       }
     >
@@ -41,6 +44,7 @@ export function ProjectSetup({ open, onClose }: { open: boolean; onClose: () => 
         <label className="text-sm font-semibold">Client<input className={cx(input, 'mt-1')} value={client} onChange={(e) => setClient(e.target.value)} placeholder="e.g. Orbit AI" /></label>
         <label className="text-sm font-semibold">Start date<input type="date" className={cx(input, 'mt-1')} value={startDate} onChange={(e) => setStart(e.target.value)} /></label>
         <label className="text-sm font-semibold">End date<input type="date" className={cx(input, 'mt-1')} value={endDate} onChange={(e) => setEnd(e.target.value)} /></label>
+        <label className="text-sm font-semibold sm:col-span-2">Description<textarea className={cx(input, 'mt-1')} rows={2} value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Who are we reaching, and what does success look like?" /></label>
       </div>
       <p className="mb-2 mt-5 text-sm font-semibold">Team & hours per day</p>
       <ul className="divide-y divide-line rounded-xl border border-line">

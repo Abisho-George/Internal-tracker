@@ -1,33 +1,22 @@
 import { Component, useEffect, useRef, useState, type ReactNode } from 'react';
 import { HashRouter, NavLink, Navigate, Route, Routes, useNavigate } from 'react-router-dom';
-import { Bell, ClipboardList, LayoutDashboard, MessageCircle, Moon, RotateCcw, Settings, Sun, Users } from 'lucide-react';
+import { Bell, ClipboardList, FolderKanban, LayoutDashboard, MessageCircle, Moon, RotateCcw, Settings, Sun, Users } from 'lucide-react';
 import { Toaster, toast } from '@/components';
-import { PEOPLE, PERSONAS, type Role } from './data';
+import { isLeadRole, PEOPLE, PERSONAS } from './data';
 import { push, useStore } from './store';
 import { Avatar, Btn, Card, cx, ago } from './ui';
-import Dashboard from './pages/Dashboard';
+import { LeadDashboard, TeamDashboard } from './pages/Dashboard';
+import Projects from './pages/Projects';
 import Assign from './pages/Assign';
 import People from './pages/People';
 import Chat from './pages/Chat';
 import { ProjectSetup } from './pages/ProjectSetup';
 
-const NAV: Record<Role, { to: string; label: string; icon: typeof Bell }[]> = {
-  resource: [{ to: '/', label: 'Dashboard', icon: LayoutDashboard }],
-  pm: [
-    { to: '/', label: 'Dashboard', icon: LayoutDashboard },
-    { to: '/assign', label: 'Assign', icon: ClipboardList },
-  ],
-  manager: [
-    { to: '/', label: 'Dashboard', icon: LayoutDashboard },
-    { to: '/assign', label: 'Assign', icon: ClipboardList },
-    { to: '/people', label: 'People', icon: Users },
-  ],
-  founder: [
-    { to: '/', label: 'Dashboard', icon: LayoutDashboard },
-    { to: '/assign', label: 'Assign', icon: ClipboardList },
-    { to: '/people', label: 'People', icon: Users },
-  ],
-};
+type NavItem = { to: string; label: string; icon: typeof Bell };
+const DASH: NavItem = { to: '/', label: 'Dashboard', icon: LayoutDashboard };
+const PROJECTS: NavItem = { to: '/projects', label: 'Projects', icon: FolderKanban };
+const ASSIGN: NavItem = { to: '/assign', label: 'Assign', icon: ClipboardList };
+const PEOPLE_NAV: NavItem = { to: '/people', label: 'People', icon: Users };
 
 function Activity() {
   const { me, notices, readAll, readNotice } = useStore();
@@ -81,7 +70,7 @@ function useLiveNotices() {
 }
 
 function Shell() {
-  const { me, notices, setMe, reset } = useStore();
+  const { me, notices, projects, setMe, reset } = useStore();
   const person = PEOPLE.find((p) => p.id === me)!;
   const unread = notices.filter((n) => n.to === me && !n.read).length;
   const [dark, setDark] = useState(() => { try { return localStorage.getItem('ls-theme') === 'dark'; } catch { return false; } });
@@ -95,9 +84,13 @@ function Shell() {
     try { localStorage.setItem('ls-theme', dark ? 'dark' : 'light'); } catch { /* storage unavailable */ }
   }, [dark]);
 
+  const lead = isLeadRole(person.role);
+  // Resources and PMs share one view; Assign appears once they own an approved project.
+  const ownsProject = projects.some((p) => p.pmId === me && p.status === 'active');
+  const navItems: NavItem[] = lead ? [DASH, ASSIGN, PEOPLE_NAV] : ownsProject ? [DASH, PROJECTS, ASSIGN] : [DASH, PROJECTS];
   const rail = [
     { to: '/activity', label: 'Activity', icon: Bell, badge: unread },
-    ...NAV[person.role].map((n) => ({ ...n, badge: 0 })),
+    ...navItems.map((n) => ({ ...n, badge: 0 })),
   ];
 
   return (
@@ -117,7 +110,7 @@ function Shell() {
           </NavLink>
         ))}
         <div className="mt-auto flex flex-col items-center gap-2">
-          {person.role !== 'resource' && <button aria-label="Onboard a new project" title="Onboard a new project" className="focus-ring rounded-xl p-2 text-muted hover:bg-surface-2" onClick={() => setSetupOpen(true)}><Settings size={18} /></button>}
+          {lead && <button aria-label="Onboard a new project" title="Onboard a new project" className="focus-ring rounded-xl p-2 text-muted hover:bg-surface-2" onClick={() => setSetupOpen(true)}><Settings size={18} /></button>}
           <button aria-label="Toggle dark mode" className="focus-ring rounded-xl p-2 text-muted hover:bg-surface-2" onClick={() => setDark((d) => !d)}>{dark ? <Sun size={18} /> : <Moon size={18} />}</button>
           <button aria-label="Reset demo data" title="Reset demo data" className="focus-ring rounded-xl p-2 text-muted hover:bg-surface-2" onClick={() => { reset(); toast({ title: 'Demo data reset', tone: 'info' }); }}><RotateCcw size={18} /></button>
         </div>
@@ -144,16 +137,18 @@ function Shell() {
         </header>
         <main className="mx-auto max-w-6xl p-6">
           <Routes>
-            <Route path="/" element={<Dashboard />} />
+            <Route path="/" element={lead ? <LeadDashboard /> : <TeamDashboard />} />
+            {!lead && <Route path="/projects" element={<Projects />} />}
             <Route path="/activity" element={<Activity />} />
-            {person.role !== 'resource' && <Route path="/assign" element={<Assign key={me} />} />}
-            {(person.role === 'manager' || person.role === 'founder') && <Route path="/people" element={<People />} />}
+            {(lead || ownsProject) && <Route path="/assign" element={<Assign key={me} />} />}
+            {lead && <Route path="/people" element={<People />} />}
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </main>
       </div>
       {/* Floating chat: stays on screen across pages, minimise with – */}
       <div className="fixed bottom-5 right-5 z-40 flex flex-col items-end gap-3">
+        {chatOpen && <div aria-hidden className="fixed inset-0 -z-10" onClick={() => setChatOpen(false)} />}
         {chatOpen && (
           <div className="h-[min(520px,75vh)] w-[min(640px,calc(100vw-2.5rem))] overflow-hidden rounded-card border border-line shadow-lift">
             <Chat onClose={() => setChatOpen(false)} />

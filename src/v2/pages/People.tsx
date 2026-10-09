@@ -3,7 +3,7 @@ import { ArrowDown, ArrowUp } from 'lucide-react';
 import { CartesianGrid, Line, LineChart, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { Modal } from '@/components';
 import { useChartColors } from '@/theme/useChartColors';
-import { PEOPLE, TASK_TYPES } from '../data';
+import { dailyHistory, PEOPLE } from '../data';
 import { useStore } from '../store';
 import { Avatar, Btn, Card, Chip, STATUS, cx } from '../ui';
 
@@ -90,7 +90,7 @@ export default function People() {
             </div>
             <div className="h-56">
               <ResponsiveContainer>
-                <LineChart data={person.history.map((v, i) => ({ week: `W${i + 1}`, v }))} margin={{ top: 8, right: 12, left: -16, bottom: 0 }}>
+                <LineChart data={dailyHistory(person, 30).map((d) => ({ week: d.date.slice(5), v: d.efficiency }))} margin={{ top: 8, right: 12, left: -16, bottom: 0 }}>
                   <CartesianGrid stroke={colors.line} vertical={false} />
                   <XAxis dataKey="week" stroke={colors.muted} fontSize={12} />
                   <YAxis domain={[60, 120]} stroke={colors.muted} fontSize={12} unit="%" />
@@ -101,12 +101,29 @@ export default function People() {
               </ResponsiveContainer>
             </div>
             <div>
+              <p className="mb-2 text-sm font-bold">Day-by-day track (last 30 days)</p>
+              <div className="max-h-56 overflow-y-auto rounded-xl border border-line">
+                <table className="w-full text-sm">
+                  <thead className="sticky top-0 bg-surface-2 text-left text-xs uppercase text-muted"><tr><th className="px-3 py-2">Date</th><th>Efficiency</th><th>Tasks done</th><th>Hours</th></tr></thead>
+                  <tbody>
+                    {dailyHistory(person, 30).reverse().map((d) => (
+                      <tr key={d.date} className="border-t border-line">
+                        <td className="px-3 py-1.5">{new Date(d.date + 'T00:00').toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' })}</td>
+                        <td className={cx('font-semibold', d.efficiency >= 100 ? 'text-mint-ink' : 'text-butter-ink')}>{d.efficiency}%</td>
+                        <td>{d.tasks}</td><td>{d.hours}h</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+            <div>
               <p className="mb-2 text-sm font-bold">Current tasks</p>
               {personTasks.length === 0 && <p className="text-sm text-muted">No tasks right now.</p>}
               <ul className="divide-y divide-line">
                 {personTasks.map((t) => (
                   <li key={t.id} className="flex items-center justify-between gap-2 py-2 text-sm">
-                    <span className="capitalize">{t.title} <span className="text-xs text-muted">· {TASK_TYPES.find((x) => x.id === t.typeId)?.name}</span></span>
+                    <span className="first-letter:uppercase">{t.title}</span>
                     <Chip tone={STATUS[t.status].tone}>{STATUS[t.status].label}</Chip>
                   </li>
                 ))}

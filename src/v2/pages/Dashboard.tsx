@@ -1,160 +1,174 @@
 import { useMemo } from 'react';
-import { Award, Briefcase, Crown } from 'lucide-react';
-import { day, METRICS, PEOPLE, type Project } from '../data';
+import { CalendarClock, Check, X } from 'lucide-react';
+import { toast } from '@/components';
+import { day, isLeadRole, PEOPLE } from '../data';
 import { efficiency, first, useStore } from '../store';
-import { Avatar, Bar, Card, Chip, H2, PROJECT_COLORS, cx } from '../ui';
+import { Avatar, Btn, Card, Chip, H2, PROJECT_COLORS, safe } from '../ui';
 import { ReviewRow, TaskRow } from './TaskCard';
 import { Timeline } from './Timeline';
+import { DayTracker, ProjectBlock, Spotlights, TargetsTable } from './Widgets';
 
-const latest = (h: number[]) => h[h.length - 1] ?? 0;
+const ORDER = { changes: 0, in_progress: 1, todo: 2, in_review: 3, done: 4 } as const;
 
-function Spotlights({ projects }: { projects: Project[] }) {
-  const s = useMemo(() => {
-    const best = (role: string) => PEOPLE.filter((p) => p.role === role && p.history.length).sort((a, b) => latest(b.history) - latest(a.history))[0];
-    const project = [...projects].sort((a, b) => b.month.meetings / Math.max(1, b.monthTarget.meetings) - a.month.meetings / Math.max(1, a.monthTarget.meetings))[0];
-    return { resource: best('resource'), pm: best('pm'), project };
-  }, [projects]);
-
-  const items = [
-    { label: 'Spotlight Project', icon: Briefcase, name: s.project?.name ?? '—', stat: s.project ? `${s.project.month.meetings} of ${s.project.monthTarget.meetings} meetings this month` : '', id: null },
-    { label: 'Spotlight Resource', icon: Award, name: s.resource?.name ?? '—', stat: `${latest(s.resource?.history ?? [])}% efficiency this week`, id: s.resource?.id },
-    { label: 'Spotlight Project Manager', icon: Crown, name: s.pm?.name ?? '—', stat: `${latest(s.pm?.history ?? [])}% efficiency this week`, id: s.pm?.id },
-  ];
-
+function ReviewQueue() {
+  const { me, tasks, projects } = useStore();
+  const list = tasks.filter((t) => t.reviewerId === me && t.status === 'in_review').sort((a, b) => Number(b.priority) - Number(a.priority));
+  if (!list.length) return null;
   return (
-    <section className="relative overflow-hidden rounded-card bg-gradient-to-br from-[#0B1B4D] via-[#1D3FA0] to-[#2747C9] p-6 text-white shadow-lift">
-      <div className="pointer-events-none absolute -right-16 -top-16 h-64 w-64 rounded-full bg-[#DC2626]/30 blur-3xl" />
-      <p className="relative text-xs font-bold uppercase tracking-[0.2em] text-white/70">This month's spotlights</p>
-      <div className="relative mt-4 grid gap-4 md:grid-cols-3">
-        {items.map((it) => (
-          <div key={it.label} className="rounded-2xl border border-white/15 bg-white/10 p-4 backdrop-blur">
-            <p className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-wide text-[#FCA5A5]"><it.icon size={14} /> {it.label}</p>
-            <div className="mt-3 flex items-center gap-3">
-              {it.id ? (
-                <span className="rounded-full ring-2 ring-[#F87171] ring-offset-2 ring-offset-[#1D3FA0]"><Avatar id={it.id} size="lg" /></span>
-              ) : (
-                <span className="flex h-14 w-14 items-center justify-center rounded-full bg-white/15"><Briefcase size={24} /></span>
-              )}
-              <div className="min-w-0">
-                <p className="truncate text-lg font-bold">{it.name}</p>
-                <p className="text-sm text-white/75">{it.stat}</p>
-              </div>
-            </div>
-          </div>
-        ))}
+    <Card className="p-0">
+      <div className="flex items-center justify-between border-b border-line px-5 py-3">
+        <h2 className="font-bold">Waiting for your review</h2>
+        <Chip tone="lavender">{list.length}</Chip>
       </div>
-    </section>
+      <ul className="divide-y divide-line">{list.map((t) => <ReviewRow key={t.id} task={t} projectName={projects.find((p) => p.id === t.projectId)?.name ?? ''} />)}</ul>
+    </Card>
   );
 }
 
-export default function Dashboard() {
+/** Dashboard for resources and project managers — the same view for both. */
+export function TeamDashboard() {
   const { me, tasks, projects } = useStore();
   const person = PEOPLE.find((p) => p.id === me);
   const today = day(0);
-
-  const myTasks = useMemo(
-    () => tasks.filter((t) => t.assigneeId === me && (t.status !== 'done' || t.date === today)),
-    [tasks, me, today],
-  );
-  // Day plan: every project this person has hours on, plus any project they hold tasks in.
+  const myTasks = useMemo(() => tasks.filter((t) => t.assigneeId === me && (t.status !== 'done' || t.date === today)), [tasks, me, today]);
   const plan = useMemo(() => {
-    const ids = new Set([...projects.filter((p) => (p.hours[me] ?? 0) > 0).map((p) => p.id), ...myTasks.map((t) => t.projectId)]);
-    return projects
-      .map((p, i) => ({ p, color: PROJECT_COLORS[i % PROJECT_COLORS.length], hours: p.hours[me] ?? 0 }))
-      .filter((x) => ids.has(x.p.id));
+    const ids = new Set([...projects.filter((p) => p.status === 'active' && (p.hours[me] ?? 0) > 0).map((p) => p.id), ...myTasks.map((t) => t.projectId)]);
+    return projects.map((p, i) => ({ p, color: PROJECT_COLORS[i % PROJECT_COLORS.length], hours: p.hours[me] ?? 0 })).filter((x) => ids.has(x.p.id));
   }, [projects, myTasks, me]);
-  const toReview = tasks.filter((t) => t.reviewerId === me && t.status === 'in_review');
-  if (!person) return <p className="text-muted">Pick a person from “Viewing as”.</p>;
+  if (!person) return null;
 
-  const managed = person.role === 'pm' ? projects.filter((p) => p.pmId === me) : person.role === 'resource' ? [] : projects;
   const totalHours = plan.reduce((s, x) => s + x.hours, 0);
   const carried = myTasks.filter((t) => t.date < today).length;
+  const logged = myTasks.filter((t) => t.date === today && t.minutes).reduce((s, t) => s + (t.minutes ?? 0), 0);
   const eff = efficiency(tasks.filter((t) => t.assigneeId === me));
-  const order = { changes: 0, in_progress: 1, todo: 2, in_review: 3, done: 4 } as const;
-  const projectName = (id: string) => projects.find((p) => p.id === id)?.name ?? 'Unknown project';
 
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-end justify-between gap-2">
         <div>
-          <h1 className="text-2xl font-bold">Good to see you, {person.name.split(' ')[0]}</h1>
+          <h1 className="text-2xl font-bold">Good to see you, {first(me)}</h1>
           <p className="text-sm text-muted">{new Date().toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' })}</p>
         </div>
         {eff != null && <Chip tone="sky">{eff}% efficiency</Chip>}
       </div>
 
-      <Spotlights projects={projects} />
+      <Spotlights />
 
-      {toReview.length > 0 && (
+      <Card>
+        <H2 right={<span className="text-xs text-muted">{totalHours}h planned{carried > 0 && ` · ${carried} carried over from yesterday`}</span>}>My day</H2>
+        <DayTracker loggedMinutes={logged} />
+        {totalHours > 0 && (
+          <div className="mt-5 flex h-9 overflow-hidden rounded-xl text-xs font-semibold text-white">
+            {plan.filter((x) => x.hours > 0).map((x) => (
+              <div key={x.p.id} className="flex items-center justify-center truncate px-2" style={{ width: `${(x.hours / totalHours) * 100}%`, background: x.color }} title={`${x.p.name}: ${x.hours}h`}>
+                {x.hours}h · {x.p.client}
+              </div>
+            ))}
+          </div>
+        )}
+      </Card>
+
+      <ReviewQueue />
+
+      <div className="space-y-5">
+        {plan.length === 0 && <Card><p className="py-6 text-center text-muted">No projects or tasks for today yet ☀️</p></Card>}
+        {plan.map(({ p, color, hours }) => {
+          const list = myTasks.filter((t) => t.projectId === p.id).sort((a, b) => Number(b.priority) - Number(a.priority) || ORDER[a.status] - ORDER[b.status]);
+          return (
+            <ProjectBlock key={p.id} color={color} title={p.name} meta={`${hours ? `${hours}h today` : 'No hours planned'} · ${list.filter((t) => t.status === 'done').length}/${list.length} done`}>
+              {list.length ? <ul className="divide-y divide-line">{list.map((t) => <TaskRow key={t.id} task={t} />)}</ul> : <p className="px-4 py-3 text-sm text-muted">No tasks yet for today.</p>}
+            </ProjectBlock>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+/** Read-only merged view for managers and founders. */
+export function LeadDashboard() {
+  const { me, projects, tasks, decideProject } = useStore();
+  const pending = projects.filter((p) => p.status === 'pending');
+  const active = projects.filter((p) => p.status === 'active');
+  const today = day(0);
+  const upcoming = active.flatMap((p) => p.meetings.filter((m) => m.date >= today).map((m) => ({ ...m, project: p.name }))).sort((a, b) => (a.date + a.time).localeCompare(b.date + b.time)).slice(0, 6);
+  const team = PEOPLE.filter((p) => !isLeadRole(p.role)).sort((a, b) => a.name.localeCompare(b.name));
+
+  return (
+    <div className="space-y-6">
+      <div>
+        <h1 className="text-2xl font-bold">Good to see you, {first(me)}</h1>
+        <p className="text-sm text-muted">Everything across Lead Strategus, at a glance. Targets appear once project managers lock them.</p>
+      </div>
+      <Spotlights />
+
+      {pending.length > 0 && (
         <Card>
-          <H2 right={<Chip tone="lavender">{toReview.length} pending</Chip>}>Review queue</H2>
+          <H2>Projects waiting for approval</H2>
           <ul className="divide-y divide-line">
-            {[...toReview].sort((a, b) => Number(b.priority) - Number(a.priority)).map((t) => <ReviewRow key={t.id} task={t} projectName={projectName(t.projectId)} />)}
+            {pending.map((p) => (
+              <li key={p.id} className="flex flex-wrap items-center gap-3 py-3">
+                <Avatar id={p.pmId} size="sm" />
+                <div className="min-w-0 flex-1">
+                  <p className="font-semibold">{p.name}</p>
+                  <p className="text-xs text-muted">Proposed by {first(p.pmId)} · {p.description || 'No description'} · {p.startDate} → {p.endDate}</p>
+                </div>
+                <Btn onClick={() => safe(() => { decideProject(p.id, true); toast({ title: `${p.name} approved`, tone: 'success' }); })}><Check size={13} /> Approve</Btn>
+                <Btn tone="ghost" className="border border-line" onClick={() => safe(() => decideProject(p.id, false))}><X size={13} /> Decline</Btn>
+              </li>
+            ))}
           </ul>
         </Card>
       )}
 
-      {plan.length > 0 && (
-        <Card>
-          <H2 right={<span className="text-xs text-muted">{totalHours}h planned{carried > 0 && ` · ${carried} carried over from yesterday`}</span>}>My day</H2>
-          {totalHours > 0 && (
-            <div className="mb-5">
-              <div className="flex h-9 overflow-hidden rounded-xl text-xs font-semibold text-white">
-                {plan.filter((x) => x.hours > 0).map((x) => (
-                  <div key={x.p.id} className="flex items-center justify-center truncate px-2" style={{ width: `${(x.hours / totalHours) * 100}%`, background: x.color }} title={`${x.p.name}: ${x.hours}h`}>
-                    {x.hours}h · {x.p.client}
-                  </div>
-                ))}
-              </div>
+      <ReviewQueue />
+
+      <div className="grid gap-5 lg:grid-cols-2">
+        {active.map((p, i) => (
+          <ProjectBlock key={p.id} color={PROJECT_COLORS[i % PROJECT_COLORS.length]} title={p.name} meta={`PM ${first(p.pmId)}`}>
+            <div className="space-y-4 p-4">
+              <Timeline project={p} />
+              <div className="flex justify-end gap-6 text-[11px] font-semibold uppercase text-muted"><span className="w-24 text-right">This week</span><span className="w-24 text-right">This month</span></div>
+              <TargetsTable p={p} />
             </div>
+          </ProjectBlock>
+        ))}
+      </div>
+
+      <div className="grid gap-5 lg:grid-cols-2">
+        <Card>
+          <H2>Upcoming meetings</H2>
+          {upcoming.length === 0 ? <p className="text-sm text-muted">No meetings scheduled yet.</p> : (
+            <ul className="divide-y divide-line">
+              {upcoming.map((m) => (
+                <li key={m.id} className="flex items-center gap-3 py-2 text-sm">
+                  <CalendarClock size={16} className="text-accent" />
+                  <span className="flex-1"><b>{m.company}</b> <span className="text-muted">· {m.contact} · {m.project}</span></span>
+                  <span className="text-muted">{m.date} {m.time}</span>
+                </li>
+              ))}
+            </ul>
           )}
-          <div className="space-y-4">
-            {plan.map(({ p, color, hours }) => {
-              const list = myTasks.filter((t) => t.projectId === p.id).sort((a, b) => Number(b.priority) - Number(a.priority) || order[a.status] - order[b.status]);
+        </Card>
+        <Card>
+          <H2>Team today</H2>
+          <ul className="divide-y divide-line">
+            {team.map((p) => {
+              const mine = tasks.filter((t) => t.assigneeId === p.id && t.date <= today);
+              const open = mine.filter((t) => t.status !== 'done' && t.status !== 'in_review').length;
               return (
-                <div key={p.id} className="rounded-2xl border border-line">
-                  <div className="flex items-center gap-3 border-b border-line px-4 py-2.5">
-                    <span className="h-3 w-3 rounded-full" style={{ background: color }} />
-                    <p className="flex-1 font-semibold">{p.name}</p>
-                    <span className="text-xs text-muted">{hours ? `${hours}h today` : 'No hours planned'} · {list.filter((t) => t.status === 'done').length}/{list.length} done</span>
-                  </div>
-                  {list.length ? <ul className="divide-y divide-line px-4">{list.map((t) => <TaskRow key={t.id} task={t} />)}</ul> : <p className="px-4 py-3 text-sm text-muted">No tasks yet for today.</p>}
-                </div>
+                <li key={p.id} className="flex items-center gap-3 py-2 text-sm">
+                  <Avatar id={p.id} size="sm" />
+                  <span className="flex-1">{p.name} <span className="text-xs text-muted">· {p.title}</span></span>
+                  <Chip tone="mint">{mine.filter((t) => t.status === 'done').length} done</Chip>
+                  <Chip tone="lavender">{mine.filter((t) => t.status === 'in_review').length} in review</Chip>
+                  <Chip tone="grey">{open} open</Chip>
+                </li>
               );
             })}
-          </div>
+          </ul>
         </Card>
-      )}
-
-      {managed.length > 0 && (
-        <Card>
-          <H2>Projects this week</H2>
-          <div className="grid gap-4 lg:grid-cols-2">
-            {managed.map((p) => (
-              <div key={p.id} className="rounded-2xl border border-line p-4">
-                <div className="mb-1 flex items-center justify-between gap-2">
-                  <p className="font-semibold">{p.name}</p>
-                  <Chip tone="sky">PM {first(p.pmId)}</Chip>
-                </div>
-                <Timeline project={p} />
-                <div className="mt-4 space-y-2">
-                  {METRICS.map((m) => {
-                    const tgt = p.weekTarget[m.id];
-                    return (
-                      <div key={m.id} className="grid grid-cols-[1fr_auto] items-center gap-x-3 text-sm">
-                        <span className="text-muted">{m.label}</span>
-                        <span className={cx('font-semibold', tgt > 0 && p.week[m.id] >= tgt && 'text-mint-ink')}>{p.week[m.id]} / {tgt}</span>
-                        <div className="col-span-2"><Bar value={p.week[m.id]} max={tgt} tone={m.id === 'meetings' ? 'peach' : 'sky'} /></div>
-                      </div>
-                    );
-                  })}
-                </div>
-                {p.updates[0] && <p className="mt-3 rounded-xl bg-surface-2 p-2 text-xs text-muted">📌 {p.updates[0].text}</p>}
-              </div>
-            ))}
-          </div>
-        </Card>
-      )}
+      </div>
     </div>
   );
 }
