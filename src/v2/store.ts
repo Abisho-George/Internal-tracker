@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import {
-  day, isLeadRole, PEOPLE, seedProjects, seedTasks, targetFor, taskTitle, TASK_TYPES, ZERO,
+  day, isLeadRole, PEOPLE, seedProjects, seedTasks, targetFor, taskTitle, TASK_TYPES, ZERO, METRICS,
   type Counts, type Metric, type Project, type Task,
 } from './data';
 
@@ -45,6 +45,9 @@ interface Actions {
   setTarget: (projectId: string, period: 'weekTarget' | 'monthTarget', metric: Metric, value: number) => void;
   setLock: (projectId: string, period: 'week' | 'month', locked: boolean) => void;
   bump: (projectId: string, metric: Metric, delta: number) => void;
+  addMetric: (projectId: string, label: string) => void;
+  removeMetric: (projectId: string, metricId: string) => void;
+  renameMetric: (projectId: string, metricId: string, label: string) => void;
   addMeeting: (projectId: string, m: { company: string; contact: string; date: string; time: string }) => void;
   postUpdate: (projectId: string, text: string) => void;
   proposeProject: (p: { name: string; client: string; description: string; startDate: string; endDate: string; hours: Record<string, number> }) => string;
@@ -187,8 +190,26 @@ export const useStore = create<Data & Actions>()(
         },
         bump: (pid, metric, delta) => {
           owns(pid);
-          const add = (c: Counts) => ({ ...c, [metric]: Math.max(0, c[metric] + delta) });
+          const add = (c: Counts) => ({ ...c, [metric]: Math.max(0, (c[metric] ?? 0) + delta) });
           proj(pid, (x) => ({ ...x, week: add(x.week), month: add(x.month) }));
+        },
+        addMetric: (pid, label) => {
+          const p = owns(pid);
+          if (p.weekLocked || p.monthLocked) throw new Error('Unlock the targets to change what you track.');
+          const clean = label.trim();
+          if (!clean) throw new Error('Name the number you want to track.');
+          if (p.metrics.some((m) => m.label.toLowerCase() === clean.toLowerCase())) throw new Error('That is already being tracked.');
+          proj(pid, (x) => ({ ...x, metrics: [...x.metrics, { id: uid(), label: clean }] }));
+        },
+        removeMetric: (pid, mid) => {
+          const p = owns(pid);
+          if (p.weekLocked || p.monthLocked) throw new Error('Unlock the targets to change what you track.');
+          proj(pid, (x) => ({ ...x, metrics: x.metrics.filter((m) => m.id !== mid) }));
+        },
+        renameMetric: (pid, mid, label) => {
+          owns(pid);
+          if (!label.trim()) throw new Error('Name cannot be empty.');
+          proj(pid, (x) => ({ ...x, metrics: x.metrics.map((m) => (m.id === mid ? { ...m, label: label.trim() } : m)) }));
         },
         addMeeting: (pid, m) => {
           owns(pid);
@@ -197,8 +218,8 @@ export const useStore = create<Data & Actions>()(
           proj(pid, (x) => ({
             ...x,
             meetings: [...x.meetings, { id: uid(), ...m, company: m.company.trim() }].sort((a, b) => (a.date + a.time).localeCompare(b.date + b.time)),
-            week: { ...x.week, meetings: x.week.meetings + 1 },
-            month: { ...x.month, meetings: x.month.meetings + 1 },
+            week: { ...x.week, meetings: (x.week.meetings ?? 0) + 1 },
+            month: { ...x.month, meetings: (x.month.meetings ?? 0) + 1 },
           }));
         },
         postUpdate: (pid, text) => {
@@ -220,7 +241,7 @@ export const useStore = create<Data & Actions>()(
             projects: [...s.projects, {
               id, name: p.name.trim(), client: p.client.trim() || p.name.trim(), description: p.description.trim(), pmId: me,
               status: lead ? 'active' : 'pending', teamIds, startDate: p.startDate, endDate: p.endDate, hours,
-              weekTarget: { ...ZERO }, monthTarget: { ...ZERO }, weekLocked: false, monthLocked: false,
+              metrics: METRICS.map((m) => ({ ...m })), weekTarget: { ...ZERO }, monthTarget: { ...ZERO }, weekLocked: false, monthLocked: false,
               week: { ...ZERO }, month: { ...ZERO }, meetings: [], updates: [],
             }],
           }));
@@ -260,7 +281,7 @@ export const useStore = create<Data & Actions>()(
     },
     {
       name: 'ls-tracker-v2',
-      version: 3,
+      version: 4,
       // Old or unreadable saved data falls back to a fresh demo instead of crashing.
       migrate: () => seed() as never,
       merge: (persisted, current) => {

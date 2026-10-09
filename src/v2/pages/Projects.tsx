@@ -1,7 +1,7 @@
 import { useState } from 'react';
-import { CalendarPlus, Lock, Minus, Pencil, Plus } from 'lucide-react';
+import { CalendarPlus, Lock, Minus, Pencil, Plus, X } from 'lucide-react';
 import { toast } from '@/components';
-import { day, METRICS, type Project } from '../data';
+import { day, type Project } from '../data';
 import { first, useStore } from '../store';
 import { Btn, Card, PROJECT_COLORS, cx, input, safe } from '../ui';
 import { ProjectSetup } from './ProjectSetup';
@@ -23,18 +23,43 @@ function TargetEditor({ p, period }: { p: Project; period: 'week' | 'month' }) {
         )}
       </div>
       <div className="grid gap-2 sm:grid-cols-2">
-        {METRICS.map((m) => (
+        {p.metrics.map((m) => (
           <label key={m.id} className="flex items-center justify-between gap-2 text-sm">
             <span className="text-muted">{m.label}</span>
             {locked ? (
-              <b className="w-20 text-right">{p[key][m.id]}</b>
+              <b className="w-20 text-right">{(p[key][m.id] ?? 0)}</b>
             ) : (
-              <input type="number" min={0} aria-label={`${m.label} ${period} target`} className={cx(input, 'w-20 py-1 text-right')} value={p[key][m.id]} onChange={(e) => safe(() => setTarget(p.id, key, m.id, +e.target.value))} />
+              <input type="number" min={0} aria-label={`${m.label} ${period} target`} className={cx(input, 'w-20 py-1 text-right')} value={(p[key][m.id] ?? 0)} onChange={(e) => safe(() => setTarget(p.id, key, m.id, +e.target.value))} />
             )}
           </label>
         ))}
       </div>
       {!locked && <p className="mt-3 text-xs text-butter-ink">Not visible to management until you lock it.</p>}
+    </div>
+  );
+}
+
+/** Add, rename or remove the numbers this project tracks (e.g. drop tele calls, add connections). */
+function MetricManager({ p }: { p: Project }) {
+  const { addMetric, removeMetric, renameMetric } = useStore();
+  const [label, setLabel] = useState('');
+  const locked = p.weekLocked || p.monthLocked;
+  return (
+    <div className="rounded-2xl border border-line p-4">
+      <p className="font-semibold">What this project tracks</p>
+      <p className="mb-3 text-xs text-muted">Not every project needs every number. {locked ? 'Unlock the targets to add or remove items.' : 'Add, rename or remove items.'}</p>
+      <ul className="flex flex-wrap gap-2">
+        {p.metrics.map((m) => (
+          <li key={m.id} className="flex items-center gap-1 rounded-full border border-line bg-surface-2 py-1 pl-3 pr-1 text-sm">
+            <input aria-label={`Rename ${m.label}`} className="w-36 bg-transparent outline-none focus:underline" defaultValue={m.label} onBlur={(e) => e.target.value !== m.label && safe(() => renameMetric(p.id, m.id, e.target.value))} />
+            <button aria-label={`Remove ${m.label}`} disabled={locked} className="focus-ring rounded-full p-1 text-muted hover:bg-line disabled:opacity-40" onClick={() => safe(() => removeMetric(p.id, m.id))}><X size={13} /></button>
+          </li>
+        ))}
+      </ul>
+      <form className="mt-3 flex gap-2" onSubmit={(e) => { e.preventDefault(); if (safe(() => addMetric(p.id, label))) setLabel(''); }}>
+        <input className={input} placeholder="Add a number to track, e.g. Connections accepted" value={label} disabled={locked} onChange={(e) => setLabel(e.target.value)} />
+        <Btn type="submit" disabled={locked}><Plus size={14} /> Add</Btn>
+      </form>
     </div>
   );
 }
@@ -48,6 +73,7 @@ function OwnedProject({ p, color }: { p: Project; color: string }) {
       <div className="space-y-5 p-4">
         {p.description && <p className="text-sm text-muted">{p.description}</p>}
         <Timeline project={p} />
+        <MetricManager p={p} />
         <div className="grid gap-4 lg:grid-cols-2">
           <TargetEditor p={p} period="week" />
           <TargetEditor p={p} period="month" />
@@ -56,12 +82,12 @@ function OwnedProject({ p, color }: { p: Project; color: string }) {
         <div className="rounded-2xl border border-line p-4">
           <p className="mb-3 font-semibold">Update this week's numbers</p>
           <div className="grid gap-2 sm:grid-cols-2">
-            {METRICS.map((x) => (
+            {p.metrics.map((x) => (
               <div key={x.id} className="flex items-center justify-between gap-2 text-sm">
                 <span className="text-muted">{x.label}</span>
                 <span className="flex items-center gap-1">
                   <button aria-label={`Minus ${x.label}`} className="focus-ring rounded-lg border border-line p-1 hover:bg-surface-2" onClick={() => safe(() => bump(p.id, x.id, -1))}><Minus size={13} /></button>
-                  <b className="w-16 text-center">{p.week[x.id]}{p.weekLocked && <span className="font-normal text-muted">/{p.weekTarget[x.id]}</span>}</b>
+                  <b className="w-16 text-center">{(p.week[x.id] ?? 0)}{p.weekLocked && <span className="font-normal text-muted">/{(p.weekTarget[x.id] ?? 0)}</span>}</b>
                   <button aria-label={`Plus ${x.label}`} className="focus-ring rounded-lg border border-line p-1 hover:bg-surface-2" onClick={() => safe(() => bump(p.id, x.id, 1))}><Plus size={13} /></button>
                 </span>
               </div>

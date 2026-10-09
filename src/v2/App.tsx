@@ -7,6 +7,7 @@ import { push, useStore } from './store';
 import { Avatar, Btn, Card, cx, ago } from './ui';
 import { LeadDashboard, TeamDashboard } from './pages/Dashboard';
 import Projects from './pages/Projects';
+import LeadProjects from './pages/LeadProjects';
 import Assign from './pages/Assign';
 import People from './pages/People';
 import Chat from './pages/Chat';
@@ -87,7 +88,7 @@ function Shell() {
   const lead = isLeadRole(person.role);
   // Resources and PMs share one view; Assign appears once they own an approved project.
   const ownsProject = projects.some((p) => p.pmId === me && p.status === 'active');
-  const navItems: NavItem[] = lead ? [DASH, ASSIGN, PEOPLE_NAV] : ownsProject ? [DASH, PROJECTS, ASSIGN] : [DASH, PROJECTS];
+  const navItems: NavItem[] = lead ? [DASH, PROJECTS, ASSIGN, PEOPLE_NAV] : ownsProject ? [DASH, PROJECTS, ASSIGN] : [DASH, PROJECTS];
   const rail = [
     { to: '/activity', label: 'Activity', icon: Bell, badge: unread },
     ...navItems.map((n) => ({ ...n, badge: 0 })),
@@ -138,7 +139,7 @@ function Shell() {
         <main className="mx-auto max-w-6xl p-6">
           <Routes>
             <Route path="/" element={lead ? <LeadDashboard /> : <TeamDashboard />} />
-            {!lead && <Route path="/projects" element={<Projects />} />}
+            <Route path="/projects" element={lead ? <LeadProjects /> : <Projects />} />
             <Route path="/activity" element={<Activity />} />
             {(lead || ownsProject) && <Route path="/assign" element={<Assign key={me} />} />}
             {lead && <Route path="/people" element={<People />} />}

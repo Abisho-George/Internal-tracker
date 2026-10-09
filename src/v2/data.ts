@@ -74,8 +74,10 @@ export function day(n = 0): string {
   return iso(d);
 }
 
-export type Metric = 'messages' | 'responses' | 'l2' | 'calls' | 'interest' | 'meetings' | 'decks';
-export const METRICS: { id: Metric; label: string }[] = [
+export type Metric = string;
+export interface MetricDef { id: string; label: string }
+/** Default metric set for a new project — PMs can add, rename or remove any of them. */
+export const METRICS: MetricDef[] = [
   { id: 'messages', label: 'Messages sent' },
   { id: 'responses', label: 'Responses received' },
   { id: 'l2', label: '2nd level sent' },
@@ -84,8 +86,8 @@ export const METRICS: { id: Metric; label: string }[] = [
   { id: 'meetings', label: 'Meetings scheduled' },
   { id: 'decks', label: 'Decks' },
 ];
-export type Counts = Record<Metric, number>;
-export const ZERO: Counts = { messages: 0, responses: 0, l2: 0, calls: 0, interest: 0, meetings: 0, decks: 0 };
+export type Counts = Record<string, number>;
+export const ZERO: Counts = {};
 
 export interface Meeting { id: string; company: string; contact: string; date: string; time: string }
 
@@ -102,6 +104,8 @@ export interface Project {
   endDate: string;
   /** Planned hours per day per team member. */
   hours: Record<string, number>;
+  /** The numbers this project tracks (customisable per project). */
+  metrics: MetricDef[];
   weekTarget: Counts;
   monthTarget: Counts;
   /** Locked targets are what management sees. */
@@ -113,6 +117,8 @@ export interface Project {
   updates: { id: string; text: string; at: string; by: string }[];
 }
 
+const ALL = METRICS;
+const pick = (...ids: string[]) => ALL.filter((m) => ids.includes(m.id));
 const c = (messages: number, responses: number, l2: number, calls: number, interest: number, meetings: number, decks: number): Counts => ({ messages, responses, l2, calls, interest, meetings, decks });
 
 export function seedProjects(): Project[] {
@@ -121,8 +127,9 @@ export function seedProjects(): Project[] {
       id: 'northwind', name: 'Northwind SaaS – US', client: 'Northwind', pmId: 'meera', status: 'active',
       description: 'Outbound to VP Sales / RevOps at US SaaS companies (50–500 staff). Goal: 15 qualified meetings a month.',
       teamIds: ['asha', 'rohan', 'meera'], startDate: day(-40), endDate: day(50), hours: { asha: 4, rohan: 8, meera: 2 },
-      weekTarget: c(300, 30, 150, 60, 10, 4, 2), monthTarget: c(1200, 120, 600, 240, 40, 15, 6), weekLocked: true, monthLocked: true,
-      week: c(214, 26, 98, 41, 8, 3, 1), month: c(870, 97, 420, 180, 31, 11, 4),
+      metrics: [...pick('messages', 'responses', 'l2', 'calls', 'interest', 'meetings', 'decks'), { id: 'connections', label: 'Connections accepted' }],
+      weekTarget: { ...c(300, 30, 150, 60, 10, 4, 2), connections: 80 }, monthTarget: { ...c(1200, 120, 600, 240, 40, 15, 6), connections: 320 }, weekLocked: true, monthLocked: true,
+      week: { ...c(214, 26, 98, 41, 8, 3, 1), connections: 57 }, month: { ...c(870, 97, 420, 180, 31, 11, 4), connections: 241 },
       meetings: [
         { id: 'mt1', company: 'Acme Cloud', contact: 'J. Ortiz, VP Sales', date: day(1), time: '10:30' },
         { id: 'mt2', company: 'Brightlane', contact: 'S. Patel, RevOps', date: day(3), time: '15:00' },
@@ -133,6 +140,7 @@ export function seedProjects(): Project[] {
       id: 'helios', name: 'Helios Fintech – UK', client: 'Helios', pmId: 'arjun', status: 'active',
       description: 'ABM for UK mid-market fintech CFOs.',
       teamIds: ['neha', 'asha'], startDate: day(-20), endDate: day(70), hours: { neha: 8, asha: 2 },
+      metrics: pick('messages', 'responses', 'l2', 'interest', 'meetings', 'decks'),
       weekTarget: c(250, 25, 120, 50, 8, 3, 1), monthTarget: c(1000, 100, 480, 200, 30, 12, 4), weekLocked: true, monthLocked: true,
       week: c(160, 14, 70, 22, 4, 1, 1), month: c(690, 66, 350, 150, 22, 8, 3),
       meetings: [], updates: [],
@@ -141,6 +149,7 @@ export function seedProjects(): Project[] {
       id: 'bd', name: 'Lead Strategus – Internal BD', client: 'Lead Strategus', pmId: 'meera', status: 'active',
       description: 'Our own pipeline: agencies and SaaS founders in India and the UK.',
       teamIds: ['asha', 'meera'], startDate: day(-90), endDate: day(90), hours: { asha: 2, meera: 4 },
+      metrics: pick('messages', 'responses', 'l2', 'calls', 'interest', 'meetings'),
       weekTarget: c(150, 15, 60, 30, 5, 2, 1), monthTarget: c(600, 60, 240, 120, 20, 8, 3), weekLocked: false, monthLocked: true,
       week: c(96, 9, 31, 18, 3, 1, 0), month: c(410, 41, 150, 77, 12, 5, 2),
       meetings: [{ id: 'mt3', company: 'Northstar Agency', contact: 'R. Kapoor, Founder', date: day(2), time: '12:00' }],

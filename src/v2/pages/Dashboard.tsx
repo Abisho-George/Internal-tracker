@@ -35,6 +35,7 @@ export function TeamDashboard() {
     const ids = new Set([...projects.filter((p) => p.status === 'active' && (p.hours[me] ?? 0) > 0).map((p) => p.id), ...myTasks.map((t) => t.projectId)]);
     return projects.map((p, i) => ({ p, color: PROJECT_COLORS[i % PROJECT_COLORS.length], hours: p.hours[me] ?? 0 })).filter((x) => ids.has(x.p.id));
   }, [projects, myTasks, me]);
+  const myProjectsWithTargets = projects.map((p, i) => ({ p, color: PROJECT_COLORS[i % PROJECT_COLORS.length] })).filter(({ p }) => p.status === 'active' && (p.pmId === me || p.teamIds.includes(me)));
   if (!person) return null;
 
   const totalHours = plan.reduce((s, x) => s + x.hours, 0);
@@ -69,6 +70,21 @@ export function TeamDashboard() {
       </Card>
 
       <ReviewQueue />
+
+      {myProjectsWithTargets.length > 0 && (
+        <Card>
+          <H2>Targets for my projects</H2>
+          <div className="grid gap-5 lg:grid-cols-2">
+            {myProjectsWithTargets.map(({ p, color }) => (
+              <div key={p.id} className="rounded-2xl border border-line p-4" style={{ borderLeft: `5px solid ${color}` }}>
+                <div className="mb-2 flex items-center justify-between gap-2"><p className="font-semibold">{p.name}</p><Chip tone="sky">PM {first(p.pmId)}</Chip></div>
+                <div className="mb-2 flex justify-end gap-6 text-[11px] font-semibold uppercase text-muted"><span className="w-24 text-right">This week</span><span className="w-24 text-right">This month</span></div>
+                <TargetsTable p={p} />
+              </div>
+            ))}
+          </div>
+        </Card>
+      )}
 
       <div className="space-y-5">
         {plan.length === 0 && <Card><p className="py-6 text-center text-muted">No projects or tasks for today yet ☀️</p></Card>}

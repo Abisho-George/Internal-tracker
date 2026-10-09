@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Modal } from '@/components';
-import { dailyHistory, METRICS, PEOPLE, type Project } from '../data';
+import { dailyHistory, PEOPLE, type Project } from '../data';
 import { first, useStore } from '../store';
 import { Avatar, Bar, Chip } from '../ui';
 
@@ -47,7 +47,7 @@ export function Spotlights() {
   const s = useMemo(() => {
     const best = (role: string) => PEOPLE.filter((p) => p.role === role && p.history.length).sort((a, b) => latest(b.history) - latest(a.history))[0];
     const active = projects.filter((p) => p.status === 'active');
-    const project = [...active].sort((a, b) => b.month.meetings / Math.max(1, b.monthTarget.meetings) - a.month.meetings / Math.max(1, a.monthTarget.meetings))[0];
+    const project = [...active].sort((a, b) => (b.month.meetings ?? 0) / Math.max(1, b.monthTarget.meetings ?? 0) - (a.month.meetings ?? 0) / Math.max(1, a.monthTarget.meetings ?? 0))[0];
     return { resource: best('resource'), pm: best('pm'), project };
   }, [projects]);
 
@@ -66,10 +66,10 @@ export function Spotlights() {
       <div className="space-y-3">
         <p className="text-sm text-muted">{p.description}</p>
         <p className="text-sm">Led by <b>{first(p.pmId)}</b> · team {p.teamIds.map(first).join(', ')}</p>
-        {METRICS.map((m) => (
+        {p.metrics.map((m) => (
           <div key={m.id} className="text-sm">
-            <div className="flex justify-between"><span className="text-muted">{m.label} (month)</span><b>{p.month[m.id]} / {p.monthTarget[m.id]}</b></div>
-            <Bar value={p.month[m.id]} max={p.monthTarget[m.id]} tone={m.id === 'meetings' ? 'peach' : 'sky'} />
+            <div className="flex justify-between"><span className="text-muted">{m.label} (month)</span><b>{(p.month[m.id] ?? 0)} / {(p.monthTarget[m.id] ?? 0)}</b></div>
+            <Bar value={(p.month[m.id] ?? 0)} max={(p.monthTarget[m.id] ?? 0)} tone={m.id === 'meetings' ? 'peach' : 'sky'} />
           </div>
         ))}
       </div>
@@ -128,14 +128,14 @@ export function ProjectBlock({ color, title, meta, children }: { color: string; 
 export function TargetsTable({ p }: { p: Project }) {
   return (
     <div className="space-y-2">
-      {METRICS.map((m) => (
+      {p.metrics.map((m) => (
         <div key={m.id} className="grid grid-cols-[1fr_auto_auto] items-center gap-x-4 text-sm">
           <span className="text-muted">{m.label}</span>
-          <span className="w-24 text-right"><b>{p.week[m.id]}</b>{p.weekLocked ? <span className="text-muted"> / {p.weekTarget[m.id]}</span> : ''}</span>
-          <span className="w-24 text-right"><b>{p.month[m.id]}</b>{p.monthLocked ? <span className="text-muted"> / {p.monthTarget[m.id]}</span> : ''}</span>
+          <span className="w-24 text-right"><b>{(p.week[m.id] ?? 0)}</b>{p.weekLocked ? <span className="text-muted"> / {(p.weekTarget[m.id] ?? 0)}</span> : ''}</span>
+          <span className="w-24 text-right"><b>{(p.month[m.id] ?? 0)}</b>{p.monthLocked ? <span className="text-muted"> / {(p.monthTarget[m.id] ?? 0)}</span> : ''}</span>
           <div className="col-span-3 grid grid-cols-2 gap-2">
-            <Bar value={p.week[m.id]} max={p.weekLocked ? p.weekTarget[m.id] : 0} tone="sky" />
-            <Bar value={p.month[m.id]} max={p.monthLocked ? p.monthTarget[m.id] : 0} tone={m.id === 'meetings' ? 'peach' : 'mint'} />
+            <Bar value={(p.week[m.id] ?? 0)} max={p.weekLocked ? (p.weekTarget[m.id] ?? 0) : 0} tone="sky" />
+            <Bar value={(p.month[m.id] ?? 0)} max={p.monthLocked ? (p.monthTarget[m.id] ?? 0) : 0} tone={m.id === 'meetings' ? 'peach' : 'mint'} />
           </div>
         </div>
       ))}
