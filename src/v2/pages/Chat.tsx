@@ -6,7 +6,7 @@ import { first, useStore } from '../store';
 import { Avatar, Btn, cx, ago, input } from '../ui';
 
 /** Teams-style anonymous chat: list of chats on the left, the conversation on the right. */
-export default function Chat() {
+export default function Chat({ onClose }: { onClose?: () => void }) {
   const { me, convs, msgs, aliases, send, createConv } = useStore();
   const mine = useMemo(() => convs.filter((c) => c.memberIds.includes(me)), [convs, me]);
   const [active, setActive] = useState(mine[0]?.id);
@@ -23,8 +23,8 @@ export default function Chat() {
   const title = (c: (typeof mine)[number]) => (c.group ? c.name : `Anonymous chat with ${first(c.memberIds.find((m) => m !== me) ?? '')}`);
 
   return (
-    <div className="flex h-[calc(100vh-7rem)] overflow-hidden rounded-card bg-surface shadow-soft">
-      <aside className="flex w-64 shrink-0 flex-col border-r border-line">
+    <div className="flex h-full overflow-hidden bg-surface">
+      <aside className="flex w-48 shrink-0 flex-col border-r border-line">
         <div className="flex items-center justify-between p-4">
           <h1 className="font-bold">Chat</h1>
           <button aria-label="New chat" className="focus-ring rounded-lg p-1.5 hover:bg-surface-2" onClick={() => setNewOpen(true)}><Plus size={18} /></button>
@@ -52,7 +52,7 @@ export default function Chat() {
 
       <section className="flex min-w-0 flex-1 flex-col">
         <header className="border-b border-line p-4">
-          <p className="font-bold">{conv ? title(conv) : 'Chat'}</p>
+          <div className="flex items-center justify-between gap-2"><p className="truncate font-bold">{conv ? title(conv) : 'Chat'}</p>{onClose && <button aria-label="Minimise chat" className="focus-ring rounded-lg px-2 text-lg leading-none text-muted hover:bg-surface-2" onClick={onClose}>–</button>}</div>
           <p className="text-xs text-muted">🎭 Anonymous — nobody, including management, can see who wrote what.{myAlias && ` You appear as ${myAlias}.`}</p>
         </header>
         <div className="flex-1 space-y-3 overflow-y-auto p-4">

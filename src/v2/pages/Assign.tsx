@@ -3,7 +3,7 @@ import { Minus, Plus, Send, Star } from 'lucide-react';
 import { toast } from '@/components';
 import { METRICS, PEOPLE, TASK_TYPES, stdMinutes } from '../data';
 import { first, useStore } from '../store';
-import { Avatar, Bar, Btn, Card, Chip, H2, STATUS, cx, fmtMin, input } from '../ui';
+import { Avatar, Bar, Btn, Card, Chip, H2, STATUS, cx, fmtMin, input, safe } from '../ui';
 
 export default function Assign() {
   const { me, tasks, projects, assign, setTarget, bump, postUpdate } = useStore();
@@ -12,14 +12,13 @@ export default function Assign() {
   const myProjects = isLead ? projects : projects.filter((p) => p.pmId === me);
 
   const [projectId, setProjectId] = useState(myProjects[0]?.id ?? projects[0].id);
-  const project = projects.find((p) => p.id === projectId)!;
+  const project = projects.find((p) => p.id === projectId) ?? projects[0];
   // PMs assign to their project team; managers/founders can give tasks to anyone, including PMs.
   const people = PEOPLE.filter((p) => p.id !== me && (isLead ? p.role !== 'founder' : project.teamIds.includes(p.id)));
   const [assigneeId, setAssigneeId] = useState(people[0]?.id ?? '');
   const [typeId, setTypeId] = useState('l1');
   const [variant, setVariant] = useState('Personalised');
   const [qty, setQty] = useState(30);
-  const [priority, setPriority] = useState(false);
   const [title, setTitle] = useState('');
   const [update, setUpdate] = useState('');
   const type = TASK_TYPES.find((t) => t.id === typeId)!;
@@ -80,9 +79,7 @@ export default function Assign() {
               Title (optional)
               <input className={cx(input, 'mt-1')} placeholder="e.g. Northwind QBR deck" value={title} onChange={(e) => setTitle(e.target.value)} />
             </label>
-            {isLead && (
-              <Btn tone={priority ? 'primary' : 'ghost'} className="border border-line" onClick={() => setPriority((v) => !v)}><Star size={14} /> Priority</Btn>
-            )}
+            {isLead && <Chip tone="coral"><Star size={12} /> Sent as priority</Chip>}
           </div>
           <p className="text-sm text-muted">
             Ideal pace {type.ideal} → target <b className="text-ink">{fmtMin(stdMinutes({ typeId, variant: type.variants ? variant : undefined }, qty))}</b> · reviewed by you
@@ -90,10 +87,10 @@ export default function Assign() {
           <Btn
             disabled={!assignee}
             onClick={() => {
-              assign({ typeId, variant: type.variants ? variant : undefined, qty, projectId, assigneeId: assignee!, reviewerId: me, priority, title });
-              toast({ title: `Task sent to ${first(assignee!)}`, tone: 'success' });
-              setTitle('');
-              setPriority(false);
+              if (safe(() => assign({ typeId, variant: type.variants ? variant : undefined, qty, projectId, assigneeId: assignee ?? '', reviewerId: me, priority: isLead, title }))) {
+                toast({ title: `Task sent to ${first(assignee!)}`, tone: 'success' });
+                setTitle('');
+              }
             }}
           >
             <Send size={14} /> Assign

@@ -92,3 +92,19 @@ export const ago = (iso: string) => {
   return `${Math.floor(m / 1440)}d ago`;
 };
 export const input = 'focus-ring w-full rounded-xl border border-line bg-surface px-3 py-2 text-sm';
+
+/** Runs an action and shows any validation error as a toast instead of crashing. */
+export function safe(fn: () => void, onError?: (msg: string) => void): boolean {
+  try {
+    fn();
+    return true;
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : 'Something went wrong — please try again.';
+    onError?.(msg);
+    import('@/components').then(({ toast }) => toast({ title: msg, tone: 'info', emoji: '⚠️' }));
+    return false;
+  }
+}
+
+/** Distinct, professional colours per project (cycled). */
+export const PROJECT_COLORS = ['#1D3FA0', '#DC2626', '#0E9F6E', '#7C3AED', '#D97706', '#0891B2'];

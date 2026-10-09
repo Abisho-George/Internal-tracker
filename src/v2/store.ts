@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import {
-  PEOPLE, PROJECTS, seedTasks, stdMinutes, taskTitle,
+  day, PEOPLE, PROJECTS, seedTasks, stdMinutes, taskTitle,
   type Metric, type Project, type Status, type Task,
 } from './data';
 
@@ -53,6 +53,7 @@ interface Actions {
   readNotice: (id: string) => void;
   createConv: (name: string, memberIds: string[], group: boolean) => string;
   send: (convId: string, text: string) => void;
+  createProject: (p: { name: string; client: string; startDate: string; endDate: string; hours: Record<string, number>; pmId: string }) => string;
   reset: () => void;
 }
 
@@ -117,6 +118,7 @@ export const useStore = create<Data & Actions>()(
         startTask: (id) => patch(id, { status: 'in_progress' }),
         submitForReview: (id, doneQty, minutes) => {
           const t = task(id);
+          if (!t || !(doneQty > 0) || !(minutes > 0)) throw new Error('Enter how many you did and the minutes taken.');
           patch(id, { status: 'in_review', doneQty, minutes });
           notify(t.reviewerId, `${first(t.assigneeId)} submitted ${t.title} for review`, id);
         },
@@ -127,15 +129,21 @@ export const useStore = create<Data & Actions>()(
         },
         sendBack: (id, text) => {
           const t = task(id);
+          if (!text.trim()) throw new Error('Feedback cannot be empty.');
           patch(id, { status: 'changes', feedback: [...t.feedback, { by: get().me, text, at: iso() }] });
           notify(t.assigneeId, `${first(get().me)} left feedback on ${t.title}`, id);
         },
         assign: (a) => {
           const me = get().me;
+          if (!a.assigneeId) throw new Error('Pick who the task is for.');
+          if (!(a.qty > 0)) throw new Error('Quantity must be at least 1.');
+          // Anything from a manager or founder is automatically a priority.
+          const role = PEOPLE.find((p) => p.id === me)?.role;
+          if (role === 'manager' || role === 'founder') a = { ...a, priority: true };
           const t: Task = {
             id: uid(), typeId: a.typeId, variant: a.variant, qty: a.qty, projectId: a.projectId,
             assigneeId: a.assigneeId, assignedById: me, reviewerId: a.reviewerId, priority: a.priority,
-            status: 'todo' as Status, feedback: [], createdAt: iso(),
+            status: 'todo' as Status, feedback: [], createdAt: iso(), date: day(0),
             title: a.title?.trim() || taskTitle(a.typeId, a.qty, a.variant),
           };
           set((s) => ({ tasks: [t, ...s.tasks] }));
@@ -180,10 +188,38 @@ export const useStore = create<Data & Actions>()(
             notify(m, `New anonymous message in ${conv.group ? conv.name : 'a private chat'}`);
           });
         },
+        createProject: (p) => {
+          if (!p.name.trim()) throw new Error('Give the project a name.');
+          if (!p.startDate || !p.endDate || p.endDate < p.startDate) throw new Error('End date must be after the start date.');
+          const teamIds = Object.keys(p.hours).filter((k) => p.hours[k] > 0);
+          if (!teamIds.length) throw new Error('Add at least one person with hours.');
+          const zero = { messages: 0, responses: 0, l2: 0, calls: 0, interest: 0, meetings: 0, decks: 0 };
+          const id = uid();
+          set((s) => ({
+            projects: [...s.projects, {
+              id, name: p.name.trim(), client: p.client.trim() || p.name.trim(), pmId: p.pmId, teamIds,
+              startDate: p.startDate, endDate: p.endDate, hours: p.hours,
+              weekTarget: { ...zero, messages: 300, l2: 150, meetings: 4 }, monthTarget: { ...zero, messages: 1200, l2: 600, meetings: 15 },
+              week: { ...zero }, month: { ...zero }, updates: [],
+            }],
+          }));
+          teamIds.filter((m) => m !== get().me).forEach((m) => notify(m, `You've been added to ${p.name.trim()} for ${p.hours[m]}h a day`));
+          return id;
+        },
         reset: () => set({ ...seed(), me: get().me }),
       };
     },
-    { name: 'ls-tracker-v2', version: 1 },
+    {
+      name: 'ls-tracker-v2',
+      version: 2,
+      // Old or unreadable saved data falls back to a fresh demo instead of crashing.
+      migrate: () => seed() as never,
+      merge: (persisted, current) => {
+        const p = persisted as Partial<Data> | undefined;
+        if (!p || !Array.isArray(p.tasks) || !Array.isArray(p.projects)) return current;
+        return { ...current, ...p };
+      },
+    },
   ),
 );
 
@@ -192,7 +228,7 @@ if (typeof window !== 'undefined') {
   window.addEventListener('storage', (e) => {
     if (e.key === 'ls-tracker-v2') {
       const me = useStore.getState().me;
-      useStore.persist.rehydrate()?.then(() => useStore.setState({ me }));
+      Promise.resolve(useStore.persist.rehydrate()).then(() => useStore.setState({ me })).catch(() => {});
     }
   });
 }

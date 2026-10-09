@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState } from 'react';
+import { Component, useEffect, useRef, useState, type ReactNode } from 'react';
 import { HashRouter, NavLink, Navigate, Route, Routes, useNavigate } from 'react-router-dom';
-import { Bell, ClipboardList, LayoutDashboard, MessageCircle, Moon, RotateCcw, Sun, Users } from 'lucide-react';
+import { Bell, ClipboardList, LayoutDashboard, MessageCircle, Moon, RotateCcw, Settings, Sun, Users } from 'lucide-react';
 import { Toaster, toast } from '@/components';
 import { PEOPLE, PERSONAS, type Role } from './data';
 import { push, useStore } from './store';
@@ -9,6 +9,7 @@ import Dashboard from './pages/Dashboard';
 import Assign from './pages/Assign';
 import People from './pages/People';
 import Chat from './pages/Chat';
+import { ProjectSetup } from './pages/ProjectSetup';
 
 const NAV: Record<Role, { to: string; label: string; icon: typeof Bell }[]> = {
   resource: [{ to: '/', label: 'Dashboard', icon: LayoutDashboard }],
@@ -44,7 +45,7 @@ function Activity() {
           <li key={n.id}>
             <button
               className={cx('focus-ring flex w-full items-start gap-3 rounded-xl p-3 text-left hover:bg-surface-2', !n.read && 'bg-accent-soft/50')}
-              onClick={() => { readNotice(n.id); nav(n.text.includes('anonymous') ? '/chat' : '/'); }}
+              onClick={() => { readNotice(n.id); nav('/'); }}
             >
               <span className={cx('mt-1.5 h-2 w-2 shrink-0 rounded-full', n.read ? 'bg-transparent' : 'bg-accent')} />
               <span className="flex-1 text-sm">{n.text}<span className="block text-xs text-muted">{ago(n.at)}</span></span>
@@ -83,24 +84,26 @@ function Shell() {
   const { me, notices, setMe, reset } = useStore();
   const person = PEOPLE.find((p) => p.id === me)!;
   const unread = notices.filter((n) => n.to === me && !n.read).length;
-  const [dark, setDark] = useState(() => localStorage.getItem('ls-theme') === 'dark');
+  const [dark, setDark] = useState(() => { try { return localStorage.getItem('ls-theme') === 'dark'; } catch { return false; } });
+  const [chatOpen, setChatOpen] = useState(false);
+  const [setupOpen, setSetupOpen] = useState(false);
+  const chatUnread = notices.filter((n) => n.to === me && !n.read && n.text.includes('anonymous')).length;
   const nav = useNavigate();
   useLiveNotices();
   useEffect(() => {
     document.documentElement.dataset.theme = dark ? 'dark' : 'light';
-    localStorage.setItem('ls-theme', dark ? 'dark' : 'light');
+    try { localStorage.setItem('ls-theme', dark ? 'dark' : 'light'); } catch { /* storage unavailable */ }
   }, [dark]);
 
   const rail = [
     { to: '/activity', label: 'Activity', icon: Bell, badge: unread },
-    { to: '/chat', label: 'Chat', icon: MessageCircle, badge: 0 },
     ...NAV[person.role].map((n) => ({ ...n, badge: 0 })),
   ];
 
   return (
     <div className="flex min-h-screen bg-bg">
       <nav className="sticky top-0 flex h-screen w-[76px] shrink-0 flex-col items-center gap-1 border-r border-line bg-surface py-3">
-        <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-xl bg-accent text-sm font-extrabold text-accent-on">LS</div>
+        <img src="./logo.jpg" alt="Lead Strategus" className="mb-3 h-11 w-11 rounded-xl bg-white object-contain p-0.5" />
         {rail.map((r) => (
           <NavLink
             key={r.to}
@@ -114,6 +117,7 @@ function Shell() {
           </NavLink>
         ))}
         <div className="mt-auto flex flex-col items-center gap-2">
+          {person.role !== 'resource' && <button aria-label="Onboard a new project" title="Onboard a new project" className="focus-ring rounded-xl p-2 text-muted hover:bg-surface-2" onClick={() => setSetupOpen(true)}><Settings size={18} /></button>}
           <button aria-label="Toggle dark mode" className="focus-ring rounded-xl p-2 text-muted hover:bg-surface-2" onClick={() => setDark((d) => !d)}>{dark ? <Sun size={18} /> : <Moon size={18} />}</button>
           <button aria-label="Reset demo data" title="Reset demo data" className="focus-ring rounded-xl p-2 text-muted hover:bg-surface-2" onClick={() => { reset(); toast({ title: 'Demo data reset', tone: 'info' }); }}><RotateCcw size={18} /></button>
         </div>
@@ -121,7 +125,7 @@ function Shell() {
 
       <div className="min-w-0 flex-1">
         <header className="sticky top-0 z-10 flex items-center justify-between gap-3 border-b border-line bg-surface/90 px-6 py-3 backdrop-blur">
-          <p className="text-sm font-bold">LS Tracker</p>
+          <div className="flex items-center gap-2"><p className="text-sm font-extrabold tracking-tight">Lead Strategus</p><span className="hidden text-xs text-muted sm:inline">Tracker</span></div>
           <div className="flex items-center gap-1 rounded-full bg-surface-2 p-1" role="group" aria-label="Viewing as">
             <span className="px-2 text-xs text-muted">Viewing as</span>
             {PERSONAS.map((id) => {
@@ -142,16 +146,55 @@ function Shell() {
           <Routes>
             <Route path="/" element={<Dashboard />} />
             <Route path="/activity" element={<Activity />} />
-            <Route path="/chat" element={<Chat />} />
             {person.role !== 'resource' && <Route path="/assign" element={<Assign key={me} />} />}
             {(person.role === 'manager' || person.role === 'founder') && <Route path="/people" element={<People />} />}
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </main>
       </div>
+      {/* Floating chat: stays on screen across pages, minimise with – */}
+      <div className="fixed bottom-5 right-5 z-40 flex flex-col items-end gap-3">
+        {chatOpen && (
+          <div className="h-[min(520px,75vh)] w-[min(640px,calc(100vw-2.5rem))] overflow-hidden rounded-card border border-line shadow-lift">
+            <Chat onClose={() => setChatOpen(false)} />
+          </div>
+        )}
+        <button
+          aria-label={chatOpen ? 'Minimise chat' : 'Open anonymous chat'}
+          onClick={() => { setChatOpen((v) => !v); notices.filter((n) => n.to === me && !n.read && n.text.includes('anonymous')).forEach((n) => useStore.getState().readNotice(n.id)); }}
+          className="focus-ring relative flex h-14 w-14 items-center justify-center rounded-full bg-accent text-accent-on shadow-lift transition hover:scale-105"
+        >
+          <MessageCircle size={24} />
+          {chatUnread > 0 && !chatOpen && <span className="absolute -right-0.5 -top-0.5 rounded-full bg-coral-strong px-1.5 text-[10px] font-bold text-white">{chatUnread}</span>}
+        </button>
+      </div>
+      <ProjectSetup open={setupOpen} onClose={() => setSetupOpen(false)} />
       <Toaster />
     </div>
   );
+}
+
+/** Catches render errors so one broken view never blanks the whole app. */
+class ErrorBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
+  state = { error: null as Error | null };
+  static getDerivedStateFromError(error: Error) {
+    return { error };
+  }
+  render() {
+    if (!this.state.error) return this.props.children;
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-bg p-6">
+        <Card className="max-w-md text-center">
+          <p className="text-lg font-bold">Something went wrong</p>
+          <p className="mt-1 text-sm text-muted">{this.state.error.message}</p>
+          <div className="mt-4 flex justify-center gap-2">
+            <Btn onClick={() => this.setState({ error: null })}>Try again</Btn>
+            <Btn tone="ghost" className="border border-line" onClick={() => { try { localStorage.removeItem('ls-tracker-v2'); } catch { /* ignore */ } location.reload(); }}>Reset demo data</Btn>
+          </div>
+        </Card>
+      </div>
+    );
+  }
 }
 
 export default function App() {
@@ -159,8 +202,10 @@ export default function App() {
     if ('Notification' in window && Notification.permission === 'default') Notification.requestPermission().catch(() => {});
   }, []);
   return (
-    <HashRouter>
-      <Shell />
-    </HashRouter>
+    <ErrorBoundary>
+      <HashRouter>
+        <Shell />
+      </HashRouter>
+    </ErrorBoundary>
   );
 }

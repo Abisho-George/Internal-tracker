@@ -63,6 +63,13 @@ export const PEOPLE: Person[] = [
 
 export const PERSONAS = ['asha', 'meera', 'kabir', 'anika'];
 
+/** yyyy-MM-dd for today + n days (local). */
+export function day(n = 0): string {
+  const d = new Date();
+  d.setDate(d.getDate() + n);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
 export type Metric = 'messages' | 'responses' | 'l2' | 'calls' | 'interest' | 'meetings' | 'decks';
 export const METRICS: { id: Metric; label: string }[] = [
   { id: 'messages', label: 'Messages sent' },
@@ -79,6 +86,11 @@ export type Counts = Record<Metric, number>;
 export interface Project {
   id: string;
   name: string;
+  client: string;
+  startDate: string; // yyyy-MM-dd
+  endDate: string;
+  /** Planned hours per day for each team member on this project. */
+  hours: Record<string, number>;
   pmId: string;
   teamIds: string[];
   weekTarget: Counts;
@@ -94,15 +106,24 @@ const c = (messages: number, responses: number, l2: number, calls: number, inter
 
 export const PROJECTS: Project[] = [
   {
-    id: 'northwind', name: 'Northwind SaaS – US', pmId: 'meera', teamIds: ['asha', 'rohan'],
+    id: 'northwind', name: 'Northwind SaaS – US', client: 'Northwind', pmId: 'meera', teamIds: ['asha', 'rohan'],
+    startDate: day(-40), endDate: day(50), hours: { asha: 4, rohan: 8 },
     weekTarget: c(300, 30, 150, 60, 10, 4, 2), monthTarget: c(1200, 120, 600, 240, 40, 15, 6),
     week: c(214, 26, 98, 41, 8, 3, 1), month: c(870, 97, 420, 180, 31, 11, 4),
     updates: [{ id: 'u1', text: 'New ICP list approved by client — starting VP Sales sequence.', at: '', by: 'meera' }],
   },
   {
-    id: 'helios', name: 'Helios Fintech – UK', pmId: 'arjun', teamIds: ['neha', 'meera'],
+    id: 'helios', name: 'Helios Fintech – UK', client: 'Helios', pmId: 'arjun', teamIds: ['neha', 'meera', 'asha'],
+    startDate: day(-20), endDate: day(70), hours: { neha: 8, meera: 2, asha: 2 },
     weekTarget: c(250, 25, 120, 50, 8, 3, 1), monthTarget: c(1000, 100, 480, 200, 30, 12, 4),
     week: c(160, 14, 70, 22, 4, 1, 1), month: c(690, 66, 350, 150, 22, 8, 3),
+    updates: [],
+  },
+  {
+    id: 'bd', name: 'Lead Strategus – Internal BD', client: 'Lead Strategus', pmId: 'meera', teamIds: ['asha', 'meera'],
+    startDate: day(-90), endDate: day(90), hours: { asha: 2, meera: 2 },
+    weekTarget: c(150, 15, 60, 30, 5, 2, 1), monthTarget: c(600, 60, 240, 120, 20, 8, 3),
+    week: c(96, 9, 31, 18, 3, 1, 0), month: c(410, 41, 150, 77, 12, 5, 2),
     updates: [],
   },
 ];
@@ -125,6 +146,8 @@ export interface Task {
   minutes?: number;
   feedback: { by: string; text: string; at: string }[];
   createdAt: string;
+  /** Day the task is planned for (yyyy-MM-dd). */
+  date: string;
 }
 
 export function stdMinutes(t: Pick<Task, 'typeId' | 'variant'>, qty: number): number {
@@ -143,7 +166,7 @@ const now = () => new Date().toISOString();
 function t(id: string, typeId: string, qty: number, assigneeId: string, projectId: string, assignedById: string, reviewerId: string, status: Status, extra: Partial<Task> = {}): Task {
   return {
     id, typeId, qty, assigneeId, projectId, assignedById, reviewerId, status,
-    title: taskTitle(typeId, qty, extra.variant), priority: false, feedback: [], createdAt: now(), ...extra,
+    title: taskTitle(typeId, qty, extra.variant), priority: false, feedback: [], createdAt: now(), date: day(0), ...extra,
   };
 }
 
@@ -157,6 +180,11 @@ export function seedTasks(): Task[] {
       feedback: [{ by: 'meera', text: 'Lovely tone! Please add the case-study link in the last 10.', at: now() }],
     }),
     t('t5', 'deck', 1, 'asha', 'northwind', 'kabir', 'kabir', 'todo', { priority: true, title: 'Northwind QBR deck' }),
+    t('t12', 'followup', 25, 'asha', 'northwind', 'meera', 'meera', 'in_progress', { date: day(-1) }),
+    t('t13', 'email', 30, 'asha', 'helios', 'arjun', 'arjun', 'todo'),
+    t('t14', 'whatsapp', 30, 'asha', 'helios', 'arjun', 'arjun', 'todo', { date: day(-1) }),
+    t('t15', 'prospect', 30, 'asha', 'bd', 'meera', 'meera', 'todo'),
+    t('t16', 'deck', 1, 'meera', 'bd', 'kabir', 'kabir', 'todo', { priority: true, title: 'Lead Strategus capabilities deck' }),
     // Meera is a resource on Helios
     t('t6', 'email', 30, 'meera', 'helios', 'arjun', 'arjun', 'todo'),
     t('t7', 'followup', 50, 'meera', 'helios', 'arjun', 'arjun', 'in_progress'),

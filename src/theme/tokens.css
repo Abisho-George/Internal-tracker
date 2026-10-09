@@ -162,3 +162,32 @@
   --c-accent-ink: 247 223 138;
   --c-on-accent: 45 35 5;
 }
+
+/* ---- Lead Strategus brand (navy / royal blue / red from the logo) ---- */
+[data-accent='brand'] {
+  --c-bg: 244 246 251;
+  --c-surface: 255 255 255;
+  --c-surface-2: 238 241 248;
+  --c-line: 222 227 238;
+  --c-ink: 15 23 42;
+  --c-muted: 71 85 105;
+  --c-faint: 100 116 139;
+  --c-accent: 29 63 160;
+  --c-accent-soft: 226 233 252;
+  --c-accent-ink: 23 50 130;
+  --c-on-accent: 255 255 255;
+  --c-coral-strong: 220 38 38;
+}
+[data-theme='dark'][data-accent='brand'] {
+  --c-bg: 11 17 32;
+  --c-surface: 17 25 46;
+  --c-surface-2: 25 35 62;
+  --c-line: 38 50 84;
+  --c-ink: 230 236 248;
+  --c-muted: 160 172 200;
+  --c-faint: 130 144 176;
+  --c-accent: 120 156 255;
+  --c-accent-soft: 30 45 90;
+  --c-accent-ink: 170 195 255;
+  --c-on-accent: 10 18 40;
+}
