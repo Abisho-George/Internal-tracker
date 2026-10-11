@@ -3,9 +3,10 @@ import { Camera, Moon, Sun, Trash2 } from 'lucide-react';
 import { CartesianGrid, Line, LineChart, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { toast } from '@/components';
 import { useChartColors } from '@/theme/useChartColors';
-import { dailyHistory, PEOPLE, taskEfficiency } from '../data';
+import { dailyHistory, PEOPLE } from '../data';
 import { first, nameOf, useStore } from '../store';
-import { Avatar, Btn, Card, Chip, H2, STATUS, ago, cx, input } from '../ui';
+import { Avatar, Btn, Card, Chip, H2, ago, cx, input } from '../ui';
+import { TaskCalendar } from './Widgets';
 
 const BADGES = ['🚀', '⭐', '🔥', '🎯', '💡', '🌱', '☕', '🎧', '🏆', '🦉'];
 const ACCENTS = [
@@ -55,7 +56,7 @@ export default function Profile() {
 
   const days = useMemo(() => dailyHistory(person, 30), [person]);
   const shown = days.slice(-range);
-  const avg = (k: 'efficiency' | 'tasks' | 'hours') => (shown.length ? Math.round((shown.reduce((s, d) => s + d[k], 0) / shown.length) * 10) / 10 : 0);
+  const avg = (k: 'onTime' | 'tasks' | 'hours') => (shown.length ? Math.round((shown.reduce((s, d) => s + d[k], 0) / shown.length) * 10) / 10 : 0);
   const mine = tasks.filter((t) => t.assigneeId === me).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   const reviewed = tasks.flatMap((t) => t.reviews.filter((r) => r.by === me).map((r) => ({ t, r }))).sort((a, b) => b.r.at.localeCompare(a.r.at));
   const assigned = tasks.filter((t) => t.assignedById === me);
@@ -137,19 +138,19 @@ export default function Profile() {
         {days.length ? (
           <>
             <div className="grid grid-cols-3 gap-3 text-center">
-              {[['Efficiency', `${avg('efficiency')}%`], ['Tasks done / day', avg('tasks')], ['Hours / day', `${avg('hours')}h`]].map(([l, v]) => (
+              {[['Tasks on time', `${avg('onTime')}%`], ['Tasks done / day', avg('tasks')], ['Hours / day', `${avg('hours')}h`]].map(([l, v]) => (
                 <div key={l as string} className="rounded-2xl bg-surface-2 p-3"><p className="text-2xl font-bold">{v}</p><p className="text-xs text-muted">{l}</p></div>
               ))}
             </div>
             {range > 1 && (
               <div className="mt-4 h-52">
                 <ResponsiveContainer>
-                  <LineChart data={shown.map((d) => ({ d: d.date.slice(5), v: d.efficiency }))} margin={{ top: 8, right: 12, left: -16, bottom: 0 }}>
+                  <LineChart data={shown.map((d) => ({ d: d.date.slice(5), v: d.onTime }))} margin={{ top: 8, right: 12, left: -16, bottom: 0 }}>
                     <CartesianGrid stroke={colors.line} vertical={false} />
                     <XAxis dataKey="d" stroke={colors.muted} fontSize={12} />
-                    <YAxis domain={[60, 125]} stroke={colors.muted} fontSize={12} unit="%" />
-                    <Tooltip formatter={(v) => [`${v}%`, 'Efficiency']} />
-                    <ReferenceLine y={100} stroke={colors.muted} strokeDasharray="4 4" />
+                    <YAxis domain={[0, 100]} stroke={colors.muted} fontSize={12} unit="%" />
+                    <Tooltip formatter={(v) => [`${v}%`, 'On time']} />
+                    <ReferenceLine y={80} stroke={colors.muted} strokeDasharray="4 4" />
                     <Line type="monotone" dataKey="v" stroke={colors.accent} strokeWidth={3} dot={{ r: 3 }} />
                   </LineChart>
                 </ResponsiveContainer>
@@ -157,12 +158,12 @@ export default function Profile() {
             )}
             <div className="mt-4 max-h-56 overflow-y-auto rounded-xl border border-line">
               <table className="w-full text-sm">
-                <thead className="sticky top-0 bg-surface-2 text-left text-xs uppercase text-muted"><tr><th className="px-3 py-2">Date</th><th>Efficiency</th><th>Tasks done</th><th>Hours</th></tr></thead>
+                <thead className="sticky top-0 bg-surface-2 text-left text-xs uppercase text-muted"><tr><th className="px-3 py-2">Date</th><th>On time</th><th>Tasks done</th><th>Hours</th></tr></thead>
                 <tbody>
                   {[...shown].reverse().map((d) => (
                     <tr key={d.date} className="border-t border-line">
                       <td className="px-3 py-1.5">{new Date(d.date + 'T00:00').toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' })}</td>
-                      <td className={cx('font-semibold', d.efficiency >= 100 ? 'text-mint-ink' : 'text-butter-ink')}>{d.efficiency}%</td>
+                      <td className={cx('font-semibold', d.onTime >= 80 ? 'text-mint-ink' : 'text-butter-ink')}>{d.onTime}%</td>
                       <td>{d.tasks}</td><td>{d.hours}h</td>
                     </tr>
                   ))}
@@ -179,21 +180,9 @@ export default function Profile() {
       </Card>
 
       <div className="grid gap-6 lg:grid-cols-2">
-        <Card>
+        <Card className="lg:col-span-2">
           <H2>My task log</H2>
-          {mine.length === 0 ? <p className="text-sm text-muted">No tasks yet.</p> : (
-            <ul className="max-h-80 divide-y divide-line overflow-y-auto">
-              {mine.map((t) => {
-                const e = taskEfficiency(t);
-                return (
-                  <li key={t.id} className="flex items-center gap-3 py-2 text-sm">
-                    <span className="min-w-0 flex-1"><span className="first-letter:uppercase">{t.title}</span><span className="block text-xs text-muted">{t.date} · from {first(t.assignedById)}{e != null && ` · ${e}%`}</span></span>
-                    <Chip tone={STATUS[t.status].tone}>{STATUS[t.status].label}</Chip>
-                  </li>
-                );
-              })}
-            </ul>
-          )}
+          <TaskCalendar tasks={mine} who="assignee" />
         </Card>
         <Card>
           <H2>My review log</H2>

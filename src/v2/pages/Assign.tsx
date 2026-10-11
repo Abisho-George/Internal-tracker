@@ -3,6 +3,7 @@ import { BellRing, History, Pencil, Plus, Send, ShoppingBasket, Star, Trash2 } f
 import { toast } from '@/components';
 import { day, isLeadRole, PEOPLE, TASK_TYPES, targetFor, taskTitle, type Task } from '../data';
 import { first, useStore, type AssignInput } from '../store';
+import { TaskCalendar } from './Widgets';
 import { Avatar, Btn, Card, Chip, H2, STATUS, cx, fmtMin, input, safe } from '../ui';
 
 function AssignedRow({ t }: { t: Task }) {
@@ -74,6 +75,7 @@ export default function Assign() {
   const auto = type ? targetFor(typeId, qty, type.variants ? variant : undefined) : target;
   useEffect(() => { if (!targetEdited && type) setTarget(auto); }, [auto, targetEdited, type]);
   const assigned = tasks.filter((t) => t.assignedById === me);
+  const openAssigned = assigned.filter((t) => t.status !== 'done' && t.status !== 'in_review');
 
   if (!project) return <Card><p className="py-8 text-center text-muted">You'll be able to assign tasks once you own an approved project.</p></Card>;
 
@@ -149,7 +151,7 @@ export default function Assign() {
               {type && targetEdited && <Btn tone="ghost" onClick={() => setTargetEdited(false)}>Reset to {fmtMin(auto)}</Btn>}
               <label className="min-w-[200px] flex-1 text-sm font-semibold">Title (optional)<input className={cx(input, 'mt-1')} placeholder="e.g. Northwind QBR deck" value={title} onChange={(e) => setTitle(e.target.value)} /></label>
             </div>
-            <p className="text-sm text-muted">{type ? `Ideal pace ${type.ideal} · ` : ''}Target {fmtMin(target > 0 ? target : 0)}{lead && <> · <Chip tone="coral"><Star size={11} /> Sent as priority</Chip></>}</p>
+            <p className="text-sm text-muted">{type ? `Ideal pace ${type.ideal} · ` : ''}Target {fmtMin(target > 0 ? target : 0)}</p>
             <Btn tone="soft" onClick={addToList}><Plus size={14} /> Add to list</Btn>
           </div>
         </Card>
@@ -168,6 +170,7 @@ export default function Assign() {
                       <li key={i.key} className="rounded-xl border border-line bg-surface-2 p-2.5 text-sm">
                         <div className="flex items-start gap-2">
                           <span className="min-w-0 flex-1"><b className="first-letter:uppercase">{label(i)}</b><span className="block text-xs text-muted">{projName(i.projectId)}</span></span>
+                          <button aria-label={i.priority ? 'Remove priority' : 'Mark as priority'} title={i.priority ? 'Priority — click to remove' : 'Mark as priority'} aria-pressed={!!i.priority} className={cx('focus-ring rounded-lg p-1', i.priority ? 'text-coral-ink' : 'text-muted hover:bg-line')} onClick={() => update(i.key, { priority: !i.priority })}><Star size={14} fill={i.priority ? 'currentColor' : 'none'} /></button>
                           <button aria-label={`Remove ${label(i)}`} className="focus-ring rounded-lg p-1 text-muted hover:bg-line hover:text-coral-ink" onClick={() => setCart((c) => c.filter((x) => x.key !== i.key))}><Trash2 size={14} /></button>
                         </div>
                         <div className="mt-2 flex gap-2">
@@ -185,6 +188,11 @@ export default function Assign() {
             </div>
           )}
           <div className="mt-4 border-t border-line pt-4">
+            <label className="mb-3 flex items-center gap-2 text-sm">
+              <input type="checkbox" checked={cart.length > 0 && cart.every((i) => i.priority)} disabled={!cart.length} onChange={(e) => setCart((c) => c.map((i) => ({ ...i, priority: e.target.checked })))} />
+              <Star size={14} className="text-coral-ink" /> Send all as priority
+              <span className="ml-auto text-xs text-muted">{cart.filter((i) => i.priority).length} priority</span>
+            </label>
             <p className="mb-3 flex justify-between text-sm"><span className="text-muted">Total target time</span><b>{fmtMin(totalMin)}</b></p>
             <div className="flex gap-2">
               <Btn className="flex-1" disabled={!cart.length} onClick={() => {
@@ -200,8 +208,13 @@ export default function Assign() {
       </div>
 
       <Card>
-        <H2 right={<span className="text-xs text-muted">{assigned.length} total</span>}>Tasks you assigned</H2>
-        {assigned.length === 0 ? <p className="text-sm text-muted">Nothing assigned yet.</p> : <ul className="divide-y divide-line">{assigned.map((t) => <AssignedRow key={t.id} t={t} />)}</ul>}
+        <H2 right={<span className="text-xs text-muted">{assigned.length} total</span>}>Tasks you assigned — by date</H2>
+        <TaskCalendar tasks={assigned} who="assigner" />
+      </Card>
+
+      <Card>
+        <H2 right={<span className="text-xs text-muted">{openAssigned.length} open</span>}>Still open — edit or remind</H2>
+        {openAssigned.length === 0 ? <p className="text-sm text-muted">Everything you assigned is done or in review ☀️</p> : <ul className="divide-y divide-line">{openAssigned.map((t) => <AssignedRow key={t.id} t={t} />)}</ul>}
       </Card>
     </div>
   );

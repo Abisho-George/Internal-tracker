@@ -3,7 +3,7 @@ import { ArrowDown, ArrowUp } from 'lucide-react';
 import { CartesianGrid, Line, LineChart, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { Modal } from '@/components';
 import { useChartColors } from '@/theme/useChartColors';
-import { dailyHistory, PEOPLE } from '../data';
+import { dailyHistory, PEOPLE, toOnTime } from '../data';
 import { useStore, nameOf } from '../store';
 import { Avatar, Btn, Card, Chip, STATUS, cx } from '../ui';
 
@@ -22,8 +22,8 @@ export default function People() {
         const mine = tasks.filter((t) => t.assigneeId === p.id);
         return {
           p,
-          eff: p.history[p.history.length - 1],
-          change: p.history[p.history.length - 1] - p.history[p.history.length - 2],
+          eff: toOnTime(p.history[p.history.length - 1]),
+          change: toOnTime(p.history[p.history.length - 1]) - toOnTime(p.history[p.history.length - 2]),
           done: mine.filter((t) => t.status === 'done').length,
           review: mine.filter((t) => t.status === 'in_review').length,
           open: mine.filter((t) => t.status !== 'done' && t.status !== 'in_review').length,
@@ -46,13 +46,13 @@ export default function People() {
             </Btn>
           ))}
           <Btn tone="soft" className="ml-auto" onClick={() => setDir((d) => (d === 'desc' ? 'asc' : 'desc'))}>
-            Efficiency {dir === 'desc' ? <><ArrowDown size={14} /> high → low</> : <><ArrowUp size={14} /> low → high</>}
+            Tasks on time {dir === 'desc' ? <><ArrowDown size={14} /> high → low</> : <><ArrowUp size={14} /> low → high</>}
           </Btn>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead className="text-left text-xs uppercase text-muted">
-              <tr><th className="py-2">Person</th><th>Efficiency (this week)</th><th>vs last week</th><th>8-wk avg</th><th>Done</th><th>In review</th><th>Open</th></tr>
+              <tr><th className="py-2">Person</th><th>Tasks on time (this week)</th><th>vs last week</th><th>8-wk avg</th><th>Done</th><th>In review</th><th>Open</th></tr>
             </thead>
             <tbody>
               {rows.map((r) => (
@@ -64,8 +64,8 @@ export default function People() {
                     </button>
                   </td>
                   <td className="font-bold">{r.eff}%</td>
-                  <td className={cx('font-semibold', r.change >= 0 ? 'text-mint-ink' : 'text-butter-ink')}>{r.change >= 0 ? '+' : ''}{r.change}</td>
-                  <td>{avg(r.p.history)}%</td>
+                  <td className={cx('font-semibold', r.change >= 0 ? 'text-mint-ink' : 'text-butter-ink')}>{r.change >= 0 ? '+' : ''}{r.change} pts</td>
+                  <td>{avg(r.p.history.map(toOnTime))}%</td>
                   <td>{r.done}</td><td>{r.review}</td><td>{r.open}</td>
                 </tr>
               ))}
@@ -79,8 +79,8 @@ export default function People() {
           <div className="space-y-5">
             <div className="grid grid-cols-3 gap-3 text-center">
               {[
-                ['This week', `${person.history[person.history.length - 1]}%`],
-                ['8-week average', `${avg(person.history)}%`],
+                ['On time this week', `${toOnTime(person.history[person.history.length - 1])}%`],
+                ['8-week average', `${avg(person.history.map(toOnTime))}%`],
                 ['Tasks done', personTasks.filter((t) => t.status === 'done').length],
               ].map(([l, v]) => (
                 <div key={l as string} className="rounded-2xl bg-surface-2 p-3">
@@ -90,12 +90,12 @@ export default function People() {
             </div>
             <div className="h-56">
               <ResponsiveContainer>
-                <LineChart data={dailyHistory(person, 30).map((d) => ({ week: d.date.slice(5), v: d.efficiency }))} margin={{ top: 8, right: 12, left: -16, bottom: 0 }}>
+                <LineChart data={dailyHistory(person, 30).map((d) => ({ week: d.date.slice(5), v: d.onTime }))} margin={{ top: 8, right: 12, left: -16, bottom: 0 }}>
                   <CartesianGrid stroke={colors.line} vertical={false} />
                   <XAxis dataKey="week" stroke={colors.muted} fontSize={12} />
-                  <YAxis domain={[60, 120]} stroke={colors.muted} fontSize={12} unit="%" />
-                  <Tooltip formatter={(v) => [`${v}%`, 'Efficiency']} />
-                  <ReferenceLine y={100} stroke={colors.muted} strokeDasharray="4 4" label={{ value: 'Standard', fill: colors.muted, fontSize: 11 }} />
+                  <YAxis domain={[0, 100]} stroke={colors.muted} fontSize={12} unit="%" />
+                  <Tooltip formatter={(v) => [`${v}%`, 'On time']} />
+                  <ReferenceLine y={80} stroke={colors.muted} strokeDasharray="4 4" label={{ value: 'Goal 80%', fill: colors.muted, fontSize: 11 }} />
                   <Line type="monotone" dataKey="v" stroke={colors.accent} strokeWidth={3} dot={{ r: 4 }} />
                 </LineChart>
               </ResponsiveContainer>
@@ -104,12 +104,12 @@ export default function People() {
               <p className="mb-2 text-sm font-bold">Day-by-day track (last 30 days)</p>
               <div className="max-h-56 overflow-y-auto rounded-xl border border-line">
                 <table className="w-full text-sm">
-                  <thead className="sticky top-0 bg-surface-2 text-left text-xs uppercase text-muted"><tr><th className="px-3 py-2">Date</th><th>Efficiency</th><th>Tasks done</th><th>Hours</th></tr></thead>
+                  <thead className="sticky top-0 bg-surface-2 text-left text-xs uppercase text-muted"><tr><th className="px-3 py-2">Date</th><th>On time</th><th>Tasks done</th><th>Hours</th></tr></thead>
                   <tbody>
                     {dailyHistory(person, 30).reverse().map((d) => (
                       <tr key={d.date} className="border-t border-line">
                         <td className="px-3 py-1.5">{new Date(d.date + 'T00:00').toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' })}</td>
-                        <td className={cx('font-semibold', d.efficiency >= 100 ? 'text-mint-ink' : 'text-butter-ink')}>{d.efficiency}%</td>
+                        <td className={cx('font-semibold', d.onTime >= 80 ? 'text-mint-ink' : 'text-butter-ink')}>{d.onTime}%</td>
                         <td>{d.tasks}</td><td>{d.hours}h</td>
                       </tr>
                     ))}

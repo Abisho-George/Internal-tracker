@@ -21,6 +21,8 @@ interface Data {
   convs: Conversation[];
   msgs: ChatMsg[];
   aliases: Record<string, string>;
+  /** Keyed by `${personId}|${yyyy-MM-dd}`. */
+  daily: Record<string, DailyUpdate>;
 }
 
 export interface AssignInput {
@@ -33,7 +35,22 @@ export interface AssignInput {
   projectId: string;
   assigneeId: string;
   title?: string;
+  priority?: boolean;
 }
+
+/** A person's day: how it's split, what they aim for in the morning and what they report in the evening. */
+export interface DayBlock { id: string; start: string; end: string; projectId: string; taskIds: string[] }
+export type ProjectNumbers = Record<string, Record<string, number>>; // projectId -> metricId -> value
+export interface DailyUpdate {
+  plan: DayBlock[];
+  sodNote: string;
+  sodTargets: ProjectNumbers;
+  sodAt?: string;
+  eodNote: string;
+  eodActuals: ProjectNumbers;
+  eodAt?: string;
+}
+export const emptyDaily = (): DailyUpdate => ({ plan: [], sodNote: '', sodTargets: {}, eodNote: '', eodActuals: {} });
 
 interface Actions {
   setMe: (id: string) => void;
@@ -44,13 +61,16 @@ interface Actions {
   sendBack: (id: string, text: string) => void;
   assign: (a: AssignInput) => void;
   assignMany: (items: AssignInput[]) => void;
+  forwardReview: (taskId: string, toId: string, note?: string) => void;
+  saveDaily: (personId: string, date: string, patch: Partial<DailyUpdate>) => void;
+  setMetricPeriods: (projectId: string, metricId: string, periods: ('week' | 'month')[]) => void;
   setProfile: (id: string, patch: Profile) => void;
   editTask: (id: string, p: { qty: number; targetMinutes: number; title: string }) => void;
   remind: (id: string) => void;
   setTarget: (projectId: string, period: 'weekTarget' | 'monthTarget', metric: Metric, value: number) => void;
   setLock: (projectId: string, period: 'week' | 'month', locked: boolean) => void;
   bump: (projectId: string, metric: Metric, delta: number) => void;
-  addMetric: (projectId: string, label: string) => void;
+  addMetric: (projectId: string, label: string, periods?: ('week' | 'month')[]) => void;
   removeMetric: (projectId: string, metricId: string) => void;
   renameMetric: (projectId: string, metricId: string, label: string) => void;
   addMeeting: (projectId: string, m: { company: string; contact: string; date: string; time: string }) => void;
@@ -81,20 +101,20 @@ const alias = () => `${ADJ[Math.floor(Math.random() * 8)]} ${ANIMALS[Math.floor(
 function seed(): Data {
   const ago = (m: number) => new Date(Date.now() - m * 60000).toISOString();
   return {
-    me: 'asha',
+    me: 'udhaya',
     profiles: {},
     tasks: seedTasks(),
     projects: seedProjects(),
     notices: [
-      { id: 'n1', to: 'meera', text: 'Asha sent 30 prospect mapping to you for review', at: ago(20), read: false, kind: 'task' },
-      { id: 'n2', to: 'meera', text: 'Rohan sent 60 templated 1st level messages to you for review', at: ago(45), read: false, kind: 'task' },
-      { id: 'n3', to: 'kabir', text: 'Neha sent Helios pitch deck v2 to you for review', at: ago(30), read: false, kind: 'task' },
-      { id: 'n4', to: 'asha', text: 'Meera left feedback on 40 2nd level messages', at: ago(60), read: false, kind: 'task' },
-      { id: 'n5', to: 'asha', text: 'Kabir gave you a priority task: Northwind QBR deck', at: ago(90), read: true, kind: 'task' },
+      { id: 'n1', to: 'bheeshma', text: 'Udhaya sent 30 prospect mapping to you for review', at: ago(20), read: false, kind: 'task' },
+      { id: 'n2', to: 'bheeshma', text: 'Bharath sent 60 templated 1st level messages to you for review', at: ago(45), read: false, kind: 'task' },
+      { id: 'n3', to: 'komala', text: 'Sachi sent Helios pitch deck v2 to you for review', at: ago(30), read: false, kind: 'task' },
+      { id: 'n4', to: 'udhaya', text: 'Bheeshma left feedback on 40 2nd level messages', at: ago(60), read: false, kind: 'task' },
+      { id: 'n5', to: 'udhaya', text: 'Komala gave you a priority task: Northwind QBR deck', at: ago(90), read: true, kind: 'task' },
     ],
     convs: [
       { id: 'c-all', name: 'Everyone', memberIds: PEOPLE.map((p) => p.id), group: true },
-      { id: 'c-fri', name: 'Friday lunch plans', memberIds: ['asha', 'meera', 'rohan', 'neha'], group: true },
+      { id: 'c-fri', name: 'Friday lunch plans', memberIds: ['udhaya', 'bheeshma', 'bharath', 'sachi'], group: true },
     ],
     msgs: [
       { id: 'm1', convId: 'c-all', alias: 'Calm Otter', text: 'Whoever refilled the chai machine — legend ☕', at: ago(120) },
@@ -103,6 +123,7 @@ function seed(): Data {
       { id: 'm4', convId: 'c-fri', alias: 'Witty Falcon', text: 'Biryani or dosa this Friday?', at: ago(40) },
     ],
     aliases: {},
+    daily: seedDaily(),
   };
 }
 
@@ -180,8 +201,8 @@ export const useStore = create<Data & Actions>()(
         assignMany: (items) => {
           if (!items.length) throw new Error('Add at least one task to the list first.');
           const me = get().me;
-          const priority = isLeadRole(roleOf(me));
           const made: Task[] = items.map((a) => {
+            const priority = !!a.priority;
             if (!a.assigneeId) throw new Error('Every task needs a person.');
             if (!(a.qty > 0)) throw new Error('Quantity must be at least 1.');
             if (!(a.targetMinutes > 0)) throw new Error('Target time must be at least 1 minute.');
@@ -198,7 +219,10 @@ export const useStore = create<Data & Actions>()(
           set((s) => ({ tasks: [...made, ...s.tasks] }));
           const by = new Map<string, Task[]>();
           made.forEach((t) => by.set(t.assigneeId, [...(by.get(t.assigneeId) ?? []), t]));
-          by.forEach((list, who) => notify(who, list.length === 1 ? `${first(me)} gave you ${priority ? 'a priority task' : 'a task'}: ${list[0].title}` : `${first(me)} gave you ${list.length} ${priority ? 'priority ' : ''}tasks for today`));
+          by.forEach((list, who) => {
+            const pri = list.filter((t) => t.priority).length;
+            notify(who, list.length === 1 ? `${first(me)} gave you ${pri ? 'a priority task' : 'a task'}: ${list[0].title}` : `${first(me)} gave you ${list.length} tasks for today${pri ? ` (${pri} priority)` : ''}`);
+          });
         },
         setProfile: (id, patch) => set((s) => ({ profiles: { ...s.profiles, [id]: { ...s.profiles[id], ...patch } } })),
         editTask: (id, p) => {
@@ -228,17 +252,39 @@ export const useStore = create<Data & Actions>()(
           const add = (c: Counts) => ({ ...c, [metric]: Math.max(0, (c[metric] ?? 0) + delta) });
           proj(pid, (x) => ({ ...x, week: add(x.week), month: add(x.month) }));
         },
-        addMetric: (pid, label) => {
+        forwardReview: (id, toId, note) => {
+          const t = task(id);
+          if (!toId || toId === get().me) throw new Error('Choose someone else to forward to.');
+          patch(id, { reviewerId: toId, feedback: note?.trim() ? [...t.feedback, { by: get().me, text: `Forwarded: ${note.trim()}`, at: iso() }] : t.feedback });
+          notify(toId, `${first(get().me)} forwarded ${first(t.assigneeId)}'s ${t.title} to you for review`);
+          notify(t.assigneeId, `${first(get().me)} passed your ${t.title} to ${first(toId)} for review`);
+        },
+        saveDaily: (pid, date, patchD) => {
+          const key = `${pid}|${date}`;
+          if (patchD.plan) {
+            for (const b of patchD.plan) {
+              if (!b.projectId) throw new Error('Pick a project for every time block.');
+              if (b.end <= b.start) throw new Error('A time block must end after it starts.');
+            }
+            const sorted = [...patchD.plan].sort((a, b) => a.start.localeCompare(b.start));
+            for (let i = 1; i < sorted.length; i++) if (sorted[i].start < sorted[i - 1].end) throw new Error('Two time blocks overlap — adjust the times.');
+          }
+          set((s) => ({ daily: { ...s.daily, [key]: { ...(s.daily[key] ?? emptyDaily()), ...patchD } } }));
+        },
+        setMetricPeriods: (pid, mid, periods) => {
+          owns(pid);
+          if (!periods.length) throw new Error('Track it at least weekly or monthly.');
+          proj(pid, (x) => ({ ...x, metrics: x.metrics.map((m) => (m.id === mid ? { ...m, periods } : m)) }));
+        },
+        addMetric: (pid, label, periods) => {
           const p = owns(pid);
-          if (p.weekLocked || p.monthLocked) throw new Error('Unlock the targets to change what you track.');
           const clean = label.trim();
           if (!clean) throw new Error('Name the number you want to track.');
           if (p.metrics.some((m) => m.label.toLowerCase() === clean.toLowerCase())) throw new Error('That is already being tracked.');
-          proj(pid, (x) => ({ ...x, metrics: [...x.metrics, { id: uid(), label: clean }] }));
+          proj(pid, (x) => ({ ...x, metrics: [...x.metrics, { id: uid(), label: clean, periods: periods?.length ? periods : ['week', 'month'] }] }));
         },
         removeMetric: (pid, mid) => {
-          const p = owns(pid);
-          if (p.weekLocked || p.monthLocked) throw new Error('Unlock the targets to change what you track.');
+          owns(pid);
           proj(pid, (x) => ({ ...x, metrics: x.metrics.filter((m) => m.id !== mid) }));
         },
         renameMetric: (pid, mid, label) => {
@@ -277,7 +323,7 @@ export const useStore = create<Data & Actions>()(
               id, name: p.name.trim(), client: p.client.trim() || p.name.trim(), description: p.description.trim(), pmId: me,
               status: lead ? 'active' : 'pending', teamIds, startDate: p.startDate, endDate: p.endDate, hours,
               metrics: METRICS.map((m) => ({ ...m })), weekTarget: { ...ZERO }, monthTarget: { ...ZERO }, weekLocked: false, monthLocked: false,
-              week: { ...ZERO }, month: { ...ZERO }, meetings: [], updates: [],
+              week: { ...ZERO }, month: { ...ZERO }, meetings: [], pastWeeks: [], pastMonths: [], updates: [],
             }],
           }));
           if (!lead) PEOPLE.filter((x) => isLeadRole(x.role)).forEach((x) => notify(x.id, `${first(me)} proposed a new project: ${p.name.trim()} — waiting for approval`, 'project'));
@@ -316,7 +362,7 @@ export const useStore = create<Data & Actions>()(
     },
     {
       name: 'ls-tracker-v2',
-      version: 5,
+      version: 6,
       // Old or unreadable saved data falls back to a fresh demo instead of crashing.
       migrate: () => seed() as never,
       merge: (persisted, current) => {
@@ -337,13 +383,105 @@ if (typeof window !== 'undefined') {
   });
 }
 
-/** Overall efficiency across a set of submitted tasks. */
-export const efficiency = (tasks: Task[]): number | null => {
+/**
+ * On-time rate: the share of submitted tasks finished within their target time
+ * (target scaled to the quantity actually done). Easier to read than a ratio.
+ */
+export const onTimeRate = (tasks: Task[]): { onTime: number; total: number; pct: number } | null => {
   const done = tasks.filter((t) => (t.status === 'done' || t.status === 'in_review') && t.minutes && t.doneQty && t.qty);
   if (!done.length) return null;
-  const target = done.reduce((s, t) => s + t.targetMinutes * (t.doneQty! / t.qty), 0);
-  const act = done.reduce((s, t) => s + t.minutes!, 0);
-  return Math.round((target / act) * 100);
+  const onTime = done.filter((t) => t.minutes! <= t.targetMinutes * (t.doneQty! / t.qty)).length;
+  return { onTime, total: done.length, pct: Math.round((onTime / done.length) * 100) };
 };
+
+/** Minutes faster (positive) or slower (negative) than the target, for a submitted task. */
+export const paceMinutes = (t: Task): number | null =>
+  t.minutes && t.doneQty && t.qty ? Math.round(t.targetMinutes * (t.doneQty / t.qty) - t.minutes) : null;
+
+/** Which project number each task type feeds automatically. */
+const TASK_FEEDS: Record<string, string[]> = {
+  l1: ['messages'], l2: ['messages', 'l2'], followup: ['messages'], whatsapp: ['messages'], email: ['messages'], deck: ['decks'],
+};
+
+export type PeriodKey = { kind: 'week' | 'month'; key: string }; // key = week start (yyyy-MM-dd) or month (yyyy-MM)
+
+/** Start date (inclusive) and end date (exclusive) for a period. */
+function periodRange(p: PeriodKey): [string, string] {
+  if (p.kind === 'week') {
+    const d = new Date(p.key + 'T00:00');
+    d.setDate(d.getDate() + 7);
+    return [p.key, d.toISOString().slice(0, 10)];
+  }
+  const [y, m] = p.key.split('-').map(Number);
+  return [`${p.key}-01`, m === 12 ? `${y + 1}-01-01` : `${y}-${String(m + 1).padStart(2, '0')}-01`];
+}
+
+/**
+ * Numbers for a project in a period: for the current week/month = manual numbers
+ * + what submitted daily tasks produced + end-of-day updates; for closed periods = history.
+ */
+export function projectCounts(p: Project, tasks: Task[], daily: Record<string, DailyUpdate>, period: PeriodKey): { counts: Record<string, number>; auto: Record<string, number> } {
+  const thisWeek = weekStartISO();
+  const thisMonth = day(0).slice(0, 7);
+  if (period.kind === 'week' && period.key !== thisWeek) return { counts: p.pastWeeks.find((w) => w.start === period.key)?.counts ?? {}, auto: {} };
+  if (period.kind === 'month' && period.key !== thisMonth) return { counts: p.pastMonths.find((w) => w.month === period.key)?.counts ?? {}, auto: {} };
+  const [from, to] = periodRange(period);
+  const auto: Record<string, number> = {};
+  const add = (k: string, v: number) => { auto[k] = (auto[k] ?? 0) + v; };
+  tasks.filter((t) => t.projectId === p.id && t.date >= from && t.date < to && (t.status === 'done' || t.status === 'in_review') && t.doneQty)
+    .forEach((t) => (TASK_FEEDS[t.typeId] ?? []).forEach((k) => add(k, t.doneQty!)));
+  Object.entries(daily).forEach(([key, d]) => {
+    const date = key.split('|')[1];
+    if (date >= from && date < to) Object.entries(d.eodActuals[p.id] ?? {}).forEach(([k, v]) => add(k, v || 0));
+  });
+  const base = period.kind === 'week' ? p.week : p.month;
+  const counts: Record<string, number> = { ...base };
+  Object.entries(auto).forEach(([k, v]) => { counts[k] = (counts[k] ?? 0) + v; });
+  return { counts, auto };
+}
+
+function weekStartISO(): string {
+  const d = new Date();
+  d.setDate(d.getDate() - ((d.getDay() + 6) % 7));
+  return d.toISOString().slice(0, 10);
+}
+
+/** A starter day plan built from the hours each project gets, beginning at 10:00. */
+export function defaultPlan(projects: Project[], personId: string): DayBlock[] {
+  let h = 10;
+  return projects
+    .filter((p) => p.status === 'active' && (p.hours[personId] ?? 0) > 0)
+    .map((p) => {
+      const start = h;
+      h = Math.min(19, h + p.hours[personId]);
+      return { id: uid(), start: `${String(start).padStart(2, '0')}:00`, end: `${String(h).padStart(2, '0')}:00`, projectId: p.id, taskIds: [] };
+    })
+    .filter((b) => b.end > b.start);
+}
+
+function seedDaily(): Record<string, DailyUpdate> {
+  // Udhaya already planned her morning today and wrote yesterday's end-of-day.
+  const y = day(-1);
+  return {
+    [`udhaya|${day(0)}`]: {
+      ...emptyDaily(),
+      plan: [
+        { id: 'b1', start: '10:00', end: '14:00', projectId: 'northwind', taskIds: ['t5', 't3', 't4'] },
+        { id: 'b2', start: '14:00', end: '16:00', projectId: 'helios', taskIds: ['t13', 't14'] },
+        { id: 'b3', start: '16:00', end: '18:00', projectId: 'bd', taskIds: ['t15'] },
+      ],
+      sodNote: 'Finish the QBR deck first, then personalised L1s.',
+      sodTargets: { northwind: { messages: 60 } },
+      sodAt: new Date(new Date().setHours(10, 5, 0, 0)).toISOString(),
+    },
+    [`udhaya|${y}`]: {
+      ...emptyDaily(),
+      sodNote: 'Follow-ups and WhatsApp batch.',
+      eodNote: 'Follow-ups 20/25 done, rest carried to today. Two positive replies.',
+      eodActuals: { northwind: { responses: 2 } },
+      eodAt: new Date(Date.now() - 86400000).toISOString(),
+    },
+  };
+}
 
 export { targetFor };

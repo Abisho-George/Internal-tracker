@@ -1,14 +1,15 @@
 import { Component, useEffect, useRef, useState, type ReactNode } from 'react';
 import { HashRouter, NavLink, Navigate, Route, Routes, useNavigate } from 'react-router-dom';
-import { Bell, ClipboardList, FolderKanban, LayoutDashboard, MessageCircle, Moon, RotateCcw, Settings, Sun, UserCircle, Users } from 'lucide-react';
+import { Bell, ClipboardList, FolderKanban, LayoutDashboard, MessageCircle, Moon, RotateCcw, NotebookPen, Settings, Sun, UserCircle, Users } from 'lucide-react';
 import { Toaster, toast } from '@/components';
 import { isLeadRole, PEOPLE, PERSONAS } from './data';
-import { first, push, useStore } from './store';
-import { Avatar, Btn, Card, cx, ago } from './ui';
+import { nameOf, push, useStore } from './store';
+import { Avatar, Btn, Card, cx } from './ui';
 import { LeadDashboard, TeamDashboard } from './pages/Dashboard';
 import Projects from './pages/Projects';
 import LeadProjects from './pages/LeadProjects';
 import Profile from './pages/Profile';
+import DailyUpdate from './pages/DailyUpdate';
 import Assign from './pages/Assign';
 import People from './pages/People';
 import Chat from './pages/Chat';
@@ -21,33 +22,6 @@ const ASSIGN: NavItem = { to: '/assign', label: 'Assign', icon: ClipboardList };
 const PEOPLE_NAV: NavItem = { to: '/people', label: 'People', icon: Users };
 const PROFILE: NavItem = { to: '/profile', label: 'Profile', icon: UserCircle };
 
-function Activity() {
-  const { me, notices, readAll, readNotice } = useStore();
-  const mine = notices.filter((n) => n.to === me);
-  const nav = useNavigate();
-  return (
-    <Card className="mx-auto max-w-2xl">
-      <div className="mb-3 flex items-center justify-between">
-        <h1 className="text-xl font-bold">Activity</h1>
-        <Btn tone="ghost" onClick={readAll}>Mark all read</Btn>
-      </div>
-      {mine.length === 0 && <p className="py-8 text-center text-muted">All caught up ☀️</p>}
-      <ul className="divide-y divide-line">
-        {mine.map((n) => (
-          <li key={n.id}>
-            <button
-              className={cx('focus-ring flex w-full items-start gap-3 rounded-xl p-3 text-left hover:bg-surface-2', !n.read && 'bg-accent-soft/50')}
-              onClick={() => { readNotice(n.id); nav('/'); }}
-            >
-              <span className={cx('mt-1.5 h-2 w-2 shrink-0 rounded-full', n.read ? 'bg-transparent' : 'bg-accent')} />
-              <span className="flex-1 text-sm">{n.text}<span className="block text-xs text-muted">{ago(n.at)}</span></span>
-            </button>
-          </li>
-        ))}
-      </ul>
-    </Card>
-  );
-}
 
 /** Pops a Teams-style toast (and a browser notification when allowed) for each new notice to the viewer. */
 function useLiveNotices() {
@@ -75,7 +49,6 @@ function useLiveNotices() {
 function Shell() {
   const { me, notices, projects, setMe, reset } = useStore();
   const person = PEOPLE.find((p) => p.id === me)!;
-  const unread = notices.filter((n) => n.to === me && !n.read).length;
   // Theme and accent are saved per person on their profile.
   const prof = useStore((st) => st.profiles[me]);
   const dark = !!prof?.dark;
@@ -95,7 +68,7 @@ function Shell() {
   const ownsProject = projects.some((p) => p.pmId === me && p.status === 'active');
   const navItems: NavItem[] = [...(lead ? [DASH, PROJECTS, ASSIGN, PEOPLE_NAV] : ownsProject ? [DASH, PROJECTS, ASSIGN] : [DASH, PROJECTS]), PROFILE];
   const rail = [
-    { to: '/activity', label: 'Activity', icon: Bell, badge: unread },
+    { to: '/daily', label: 'Daily update', icon: NotebookPen, badge: 0 },
     ...navItems.map((n) => ({ ...n, badge: 0 })),
   ];
 
@@ -125,27 +98,25 @@ function Shell() {
       <div className="min-w-0 flex-1">
         <header className="sticky top-0 z-10 flex items-center justify-between gap-3 border-b border-line bg-surface/90 px-6 py-3 backdrop-blur">
           <div className="flex items-center gap-2"><p className="text-sm font-extrabold tracking-tight">Lead Strategus</p><span className="hidden text-xs text-muted sm:inline">Tracker</span></div>
-          <div className="flex items-center gap-1 rounded-full bg-surface-2 p-1" role="group" aria-label="Viewing as">
-            <span className="px-2 text-xs text-muted">Viewing as</span>
-            {PERSONAS.map((id) => {
-              const p = PEOPLE.find((x) => x.id === id)!;
-              return (
-                <button
-                  key={id}
-                  onClick={() => { setMe(id); nav('/'); }}
-                  className={cx('focus-ring flex items-center gap-1.5 rounded-full py-1 pl-1 pr-3 text-xs font-semibold', id === me ? 'bg-surface shadow-soft' : 'text-muted')}
-                >
-                  <Avatar id={id} size="sm" /> {first(p.id)} <span className="hidden font-normal sm:inline">· {p.title}</span>
-                </button>
-              );
-            })}
-          </div>
+          <label className="flex items-center gap-2 rounded-full bg-surface-2 py-1 pl-1 pr-2 text-xs">
+            <Avatar id={me} size="sm" />
+            <span className="text-muted">Viewing as</span>
+            <select aria-label="Viewing as" className="focus-ring rounded-full bg-surface px-2 py-1 font-semibold" value={me} onChange={(e) => { setMe(e.target.value); nav('/'); }}>
+              {(['pm', 'resource', 'manager', 'founder'] as const).map((r) => (
+                <optgroup key={r} label={r === 'pm' ? 'Project managers' : r === 'resource' ? 'Resources' : r === 'manager' ? 'Manager' : 'Founders'}>
+                  {PERSONAS.filter((id) => PEOPLE.find((x) => x.id === id)?.role === r).map((id) => (
+                    <option key={id} value={id}>{nameOf(id)} · {PEOPLE.find((x) => x.id === id)?.title}</option>
+                  ))}
+                </optgroup>
+              ))}
+            </select>
+          </label>
         </header>
         <main className="mx-auto max-w-6xl p-6">
           <Routes>
             <Route path="/" element={lead ? <LeadDashboard /> : <TeamDashboard />} />
             <Route path="/projects" element={lead ? <LeadProjects /> : <Projects />} />
-            <Route path="/activity" element={<Activity />} />
+            <Route path="/daily" element={<DailyUpdate />} />
             <Route path="/profile" element={<Profile />} />
             {(lead || ownsProject) && <Route path="/assign" element={<Assign key={me} />} />}
             {lead && <Route path="/people" element={<People />} />}

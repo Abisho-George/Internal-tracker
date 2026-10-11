@@ -1,27 +1,42 @@
 import { useState } from 'react';
-import { Check, History, MessageSquare, Play, Send, Star, Undo2 } from 'lucide-react';
+import { Check, Forward, History, MessageSquare, Send, Star } from 'lucide-react';
 import { Modal, toast } from '@/components';
-import { day, isLeadRole, PEOPLE, TASK_TYPES, taskEfficiency, type Task } from '../data';
-import { first, useStore } from '../store';
+import { day, PEOPLE, TASK_TYPES, type Task } from '../data';
+import { first, nameOf, paceMinutes, useStore } from '../store';
 import { Avatar, Btn, Chip, STATUS, cx, fmtMin, input, safe } from '../ui';
 
-/** Compact row for a task the viewer owns: status, target time and the next action. */
+/** "5m faster than target" / "12m over target" — plain words instead of a ratio. */
+export function PaceChip({ task }: { task: Task }) {
+  const d = paceMinutes(task);
+  if (d == null) return null;
+  if (d >= 0) return <Chip tone="mint">✓ On time{d > 0 ? ` · ${fmtMin(d)} faster` : ''}</Chip>;
+  return <Chip tone="butter">{fmtMin(-d)} over target</Chip>;
+}
+
+/** Everyone in the company except the viewer, project manager first. */
+function useReviewerOptions(projectId: string) {
+  const { me, projects } = useStore();
+  const pm = projects.find((p) => p.id === projectId)?.pmId;
+  return PEOPLE.filter((p) => p.id !== me).sort((a, b) => Number(b.id === pm) - Number(a.id === pm) || nameOf(a.id).localeCompare(nameOf(b.id))).map((p) => ({
+    id: p.id,
+    label: `${nameOf(p.id)} — ${p.id === pm ? 'Project manager of this project' : p.title}`,
+  }));
+}
+
+/** Compact row for a task the viewer owns. */
 export function TaskRow({ task }: { task: Task }) {
-  const { me, projects, startTask, undoStart, submitForReview } = useStore();
+  const { submitForReview } = useStore();
+  const options = useReviewerOptions(task.projectId);
   const [open, setOpen] = useState(false);
   const [qty, setQty] = useState(task.doneQty ?? task.qty);
   const [mins, setMins] = useState(task.minutes ?? task.targetMinutes);
-  const project = projects.find((p) => p.id === task.projectId);
-  // Reviewer options: the project's PM, plus managers and founders (never yourself).
-  const reviewers = PEOPLE.filter((p) => p.id !== me && (p.id === project?.pmId || isLeadRole(p.role)));
-  const [reviewer, setReviewer] = useState(task.reviewerId && task.reviewerId !== me ? task.reviewerId : reviewers[0]?.id ?? '');
+  const [reviewer, setReviewer] = useState(task.reviewerId ?? options[0]?.id ?? '');
   const [err, setErr] = useState('');
   const type = TASK_TYPES.find((t) => t.id === task.typeId);
   const st = STATUS[task.status];
   const carried = task.date < day(0) && task.status !== 'done';
   const lastFb = task.feedback[task.feedback.length - 1];
   const canSubmit = task.status === 'todo' || task.status === 'in_progress' || task.status === 'changes';
-  const eff = taskEfficiency(task);
 
   return (
     <li className="px-4 py-3">
@@ -33,18 +48,10 @@ export function TaskRow({ task }: { task: Task }) {
             {carried && <Chip tone="butter"><History size={11} /> From yesterday</Chip>}
             {task.reminders > 0 && task.status !== 'done' && <Chip tone="peach">⏰ Reminded</Chip>}
           </p>
-          <p className="text-xs text-muted">
-            Target {fmtMin(task.targetMinutes)}{type ? ` · ideal ${type.ideal}` : ' · custom task'}
-            {eff != null && ` · ${eff}% efficiency`}
-          </p>
+          <p className="text-xs text-muted">Target {fmtMin(task.targetMinutes)}{type ? ` · ideal ${type.ideal}` : ' · custom task'}</p>
         </div>
+        <PaceChip task={task} />
         <Chip tone={st.tone}>{st.label}</Chip>
-        {task.status === 'todo' && <Btn tone="ghost" className="border border-line" onClick={() => startTask(task.id)}><Play size={13} /> Start</Btn>}
-        {task.status === 'in_progress' && (
-          <Btn tone="ghost" className="border border-line" title="Started by mistake? Move it back to To do" onClick={() => { undoStart(task.id); toast({ title: 'Moved back to To do', tone: 'info' }); }}>
-            <Undo2 size={13} /> Undo start
-          </Btn>
-        )}
         {canSubmit && <Btn onClick={() => { setErr(''); setOpen(true); }}><Send size={13} /> {task.status === 'changes' ? 'Resubmit' : 'Submit'}</Btn>}
         {task.status === 'in_review' && <span className="text-xs text-muted">with {first(task.reviewerId)}</span>}
       </div>
@@ -59,31 +66,23 @@ export function TaskRow({ task }: { task: Task }) {
         description={task.title}
         size="sm"
         footer={
-          <Btn
-            onClick={() => {
-              if (safe(() => submitForReview(task.id, qty, mins, reviewer), setErr)) {
-                setOpen(false);
-                toast({ title: `Sent to ${first(reviewer)} for review`, tone: 'success' });
-              }
-            }}
-          >
+          <Btn onClick={() => {
+            if (safe(() => submitForReview(task.id, qty, mins, reviewer), setErr)) {
+              setOpen(false);
+              toast({ title: `Sent to ${first(reviewer)} for review`, tone: 'success' });
+            }
+          }}>
             <Send size={14} /> Send to {first(reviewer)}
           </Btn>
         }
       >
-        <p className="mb-2 text-sm font-semibold">Who should review it?</p>
-        <div className="mb-4 flex flex-wrap gap-2">
-          {reviewers.map((p) => (
-            <button
-              key={p.id}
-              onClick={() => setReviewer(p.id)}
-              className={cx('focus-ring flex items-center gap-2 rounded-full border py-1 pl-1 pr-3 text-sm', p.id === reviewer ? 'border-accent bg-accent-soft font-semibold' : 'border-line')}
-            >
-              <Avatar id={p.id} size="sm" /> {first(p.id)} <span className="text-xs text-muted">{p.id === project?.pmId ? 'Project manager' : p.title}</span>
-            </button>
-          ))}
-        </div>
-        <div className="grid grid-cols-2 gap-3">
+        <label className="text-sm font-semibold">
+          Who should review it?
+          <select className={cx(input, 'mt-1')} value={reviewer} onChange={(e) => setReviewer(e.target.value)}>
+            {options.map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
+          </select>
+        </label>
+        <div className="mt-4 grid grid-cols-2 gap-3">
           <label className="text-sm font-semibold">
             {task.unit[0].toUpperCase() + task.unit.slice(1)} done
             <input type="number" min={1} className={cx(input, 'mt-1')} value={qty} onChange={(e) => setQty(+e.target.value)} />
@@ -105,12 +104,13 @@ export function TaskRow({ task }: { task: Task }) {
   );
 }
 
-/** One line in a reviewer's queue with inline approve / feedback. */
+/** One line in a reviewer's queue: approve, give feedback, or forward to someone else. */
 export function ReviewRow({ task, projectName }: { task: Task; projectName: string }) {
-  const { approve, sendBack } = useStore();
-  const [fbOpen, setFbOpen] = useState(false);
+  const { approve, sendBack, forwardReview } = useStore();
+  const options = useReviewerOptions(task.projectId).filter((o) => o.id !== task.assigneeId);
+  const [mode, setMode] = useState<null | 'feedback' | 'forward'>(null);
   const [fb, setFb] = useState('');
-  const eff = taskEfficiency(task);
+  const [to, setTo] = useState(options[0]?.id ?? '');
   return (
     <li className="px-4 py-3">
       <div className="flex flex-wrap items-center gap-3">
@@ -119,26 +119,32 @@ export function ReviewRow({ task, projectName }: { task: Task; projectName: stri
           <p className="flex flex-wrap items-center gap-2 text-sm font-semibold first-letter:uppercase">
             {task.title} {task.priority && <Chip tone="coral"><Star size={11} /> Priority</Chip>}
           </p>
-          <p className="text-xs text-muted">{first(task.assigneeId)} · {projectName} · {task.doneQty} {task.unit} in {fmtMin(task.minutes ?? 0)}</p>
+          <p className="text-xs text-muted">{first(task.assigneeId)} · {projectName} · {task.doneQty} {task.unit} in {fmtMin(task.minutes ?? 0)} (target {fmtMin(task.targetMinutes)})</p>
         </div>
-        {eff != null && <Chip tone={eff >= 100 ? 'mint' : 'butter'}>{eff}%</Chip>}
+        <PaceChip task={task} />
         <Btn onClick={() => safe(() => { approve(task.id); toast({ title: `Approved — ${first(task.assigneeId)} notified`, tone: 'success' }); })}><Check size={13} /> Approve</Btn>
-        <Btn tone="ghost" className="border border-line" onClick={() => setFbOpen((v) => !v)}><MessageSquare size={13} /> Feedback</Btn>
+        <Btn tone="ghost" className="border border-line" onClick={() => setMode(mode === 'feedback' ? null : 'feedback')}><MessageSquare size={13} /> Feedback</Btn>
+        <Btn tone="ghost" className="border border-line" onClick={() => setMode(mode === 'forward' ? null : 'forward')}><Forward size={13} /> Forward</Btn>
       </div>
-      {fbOpen && (
-        <form
-          className="ml-10 mt-2 flex gap-2"
-          onSubmit={(e) => {
-            e.preventDefault();
-            if (safe(() => sendBack(task.id, fb))) {
-              toast({ title: `Feedback sent to ${first(task.assigneeId)}`, tone: 'info' });
-              setFb('');
-              setFbOpen(false);
-            }
-          }}
-        >
+      {mode === 'feedback' && (
+        <form className="ml-10 mt-2 flex gap-2" onSubmit={(e) => {
+          e.preventDefault();
+          if (safe(() => sendBack(task.id, fb))) { toast({ title: `Feedback sent to ${first(task.assigneeId)}`, tone: 'info' }); setFb(''); setMode(null); }
+        }}>
           <input className={input} autoFocus placeholder="What should they change?" value={fb} onChange={(e) => setFb(e.target.value)} />
           <Btn type="submit">Send</Btn>
+        </form>
+      )}
+      {mode === 'forward' && (
+        <form className="ml-10 mt-2 grid gap-2 sm:grid-cols-[1fr_1fr_auto]" onSubmit={(e) => {
+          e.preventDefault();
+          if (safe(() => forwardReview(task.id, to, fb))) { toast({ title: `Forwarded to ${first(to)}`, tone: 'info' }); setFb(''); setMode(null); }
+        }}>
+          <select aria-label="Forward to" className={input} value={to} onChange={(e) => setTo(e.target.value)}>
+            {options.map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
+          </select>
+          <input className={input} placeholder="Note (optional)" value={fb} onChange={(e) => setFb(e.target.value)} />
+          <Btn type="submit"><Forward size={13} /> Forward</Btn>
         </form>
       )}
     </li>

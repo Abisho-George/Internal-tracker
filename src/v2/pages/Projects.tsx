@@ -1,8 +1,8 @@
 import { useState } from 'react';
 import { CalendarPlus, Lock, Minus, Pencil, Plus, X } from 'lucide-react';
 import { toast } from '@/components';
-import { day, type Project } from '../data';
-import { first, useStore } from '../store';
+import { day, inPeriod, weekStart, type Project } from '../data';
+import { first, projectCounts, useStore } from '../store';
 import { Btn, Card, PROJECT_COLORS, cx, input, safe } from '../ui';
 import { ProjectSetup } from './ProjectSetup';
 import { Timeline } from './Timeline';
@@ -23,7 +23,7 @@ function TargetEditor({ p, period }: { p: Project; period: 'week' | 'month' }) {
         )}
       </div>
       <div className="grid gap-2 sm:grid-cols-2">
-        {p.metrics.map((m) => (
+        {p.metrics.filter((m) => inPeriod(m, period)).map((m) => (
           <label key={m.id} className="flex items-center justify-between gap-2 text-sm">
             <span className="text-muted">{m.label}</span>
             {locked ? (
@@ -41,31 +41,82 @@ function TargetEditor({ p, period }: { p: Project; period: 'week' | 'month' }) {
 
 /** Add, rename or remove the numbers this project tracks (e.g. drop tele calls, add connections). */
 function MetricManager({ p }: { p: Project }) {
-  const { addMetric, removeMetric, renameMetric } = useStore();
+  const { addMetric, removeMetric, renameMetric, setMetricPeriods } = useStore();
+  const [editing, setEditing] = useState(false);
   const [label, setLabel] = useState('');
-  const locked = p.weekLocked || p.monthLocked;
+  const [periods, setPeriods] = useState<('week' | 'month')[]>(['week', 'month']);
+  const tag = (m: Project['metrics'][number]) => (!m.periods || m.periods.length === 2 ? 'Weekly + monthly' : m.periods[0] === 'week' ? 'Weekly only' : 'Monthly only');
+  const toggle = (list: ('week' | 'month')[], x: 'week' | 'month') => (list.includes(x) ? list.filter((y) => y !== x) : [...list, x]);
   return (
     <div className="rounded-2xl border border-line p-4">
-      <p className="font-semibold">What this project tracks</p>
-      <p className="mb-3 text-xs text-muted">Not every project needs every number. {locked ? 'Unlock the targets to add or remove items.' : 'Add, rename or remove items.'}</p>
-      <ul className="flex flex-wrap gap-2">
-        {p.metrics.map((m) => (
-          <li key={m.id} className="flex items-center gap-1 rounded-full border border-line bg-surface-2 py-1 pl-3 pr-1 text-sm">
-            <input aria-label={`Rename ${m.label}`} className="w-36 bg-transparent outline-none focus:underline" defaultValue={m.label} onBlur={(e) => e.target.value !== m.label && safe(() => renameMetric(p.id, m.id, e.target.value))} />
-            <button aria-label={`Remove ${m.label}`} disabled={locked} className="focus-ring rounded-full p-1 text-muted hover:bg-line disabled:opacity-40" onClick={() => safe(() => removeMetric(p.id, m.id))}><X size={13} /></button>
-          </li>
+      <div className="mb-3 flex items-center justify-between gap-2">
+        <div>
+          <p className="font-semibold">What this project tracks</p>
+          <p className="text-xs text-muted">Choose the numbers, and whether each has a weekly target, a monthly target, or both.</p>
+        </div>
+        <Btn tone={editing ? 'primary' : 'ghost'} className="border border-line" onClick={() => setEditing((v) => !v)}><Pencil size={13} /> {editing ? 'Done' : 'Edit'}</Btn>
+      </div>
+      {!editing ? (
+        <ul className="flex flex-wrap gap-2">
+          {p.metrics.map((m) => <li key={m.id} className="rounded-full border border-line bg-surface-2 px-3 py-1 text-sm">{m.label} <span className="text-xs text-muted">· {tag(m)}</span></li>)}
+        </ul>
+      ) : (
+        <>
+          <ul className="divide-y divide-line rounded-xl border border-line">
+            {p.metrics.map((m) => {
+              const cur = m.periods ?? ['week', 'month'];
+              return (
+                <li key={m.id} className="flex flex-wrap items-center gap-2 px-3 py-2 text-sm">
+                  <input aria-label={`Rename ${m.label}`} className={cx(input, 'max-w-[240px] flex-1 py-1')} defaultValue={m.label} onBlur={(e) => e.target.value !== m.label && safe(() => renameMetric(p.id, m.id, e.target.value))} />
+                  {(['week', 'month'] as const).map((x) => (
+                    <label key={x} className="flex items-center gap-1 text-xs text-muted">
+                      <input type="checkbox" checked={cur.includes(x)} onChange={() => safe(() => setMetricPeriods(p.id, m.id, toggle(cur, x)))} /> {x === 'week' ? 'Weekly' : 'Monthly'}
+                    </label>
+                  ))}
+                  <button aria-label={`Remove ${m.label}`} className="focus-ring ml-auto rounded-lg p-1.5 text-muted hover:bg-surface-2 hover:text-coral-ink" onClick={() => safe(() => removeMetric(p.id, m.id))}><X size={14} /></button>
+                </li>
+              );
+            })}
+          </ul>
+          <form className="mt-3 flex flex-wrap items-center gap-2" onSubmit={(e) => { e.preventDefault(); if (safe(() => addMetric(p.id, label, periods))) { setLabel(''); toast({ title: 'Now tracking it', tone: 'success' }); } }}>
+            <input className={cx(input, 'min-w-[220px] flex-1')} placeholder="New number, e.g. Connections accepted" value={label} onChange={(e) => setLabel(e.target.value)} />
+            {(['week', 'month'] as const).map((x) => (
+              <label key={x} className="flex items-center gap-1 text-xs text-muted"><input type="checkbox" checked={periods.includes(x)} onChange={() => setPeriods((v) => toggle(v, x))} /> {x === 'week' ? 'Weekly' : 'Monthly'}</label>
+            ))}
+            <Btn type="submit"><Plus size={14} /> Add</Btn>
+          </form>
+        </>
+      )}
+    </div>
+  );
+}
+
+/** This week's numbers: filled automatically from submitted tasks and end-of-day updates; +/- for anything extra. */
+function WeekNumbers({ p }: { p: Project }) {
+  const { tasks, daily, bump } = useStore();
+  const { counts, auto } = projectCounts(p, tasks, daily, { kind: 'week', key: weekStart(0) });
+  return (
+    <div className="rounded-2xl border border-line p-4">
+      <p className="font-semibold">This week's numbers</p>
+      <p className="mb-3 text-xs text-muted">Filled in automatically from submitted tasks and everyone's end-of-day updates. Use − / + only for anything that wasn't logged.</p>
+      <div className="grid gap-2 sm:grid-cols-2">
+        {p.metrics.filter((m) => inPeriod(m, 'week')).map((x) => (
+          <div key={x.id} className="flex items-center justify-between gap-2 text-sm">
+            <span className="text-muted">{x.label}{auto[x.id] ? <span className="block text-[11px] text-accent-ink">{auto[x.id]} auto-counted</span> : null}</span>
+            <span className="flex items-center gap-1">
+              <button aria-label={`Minus ${x.label}`} className="focus-ring rounded-lg border border-line p-1 hover:bg-surface-2" onClick={() => safe(() => bump(p.id, x.id, -1))}><Minus size={13} /></button>
+              <b className="w-20 text-center">{counts[x.id] ?? 0}{p.weekLocked && <span className="font-normal text-muted">/{p.weekTarget[x.id] ?? 0}</span>}</b>
+              <button aria-label={`Plus ${x.label}`} className="focus-ring rounded-lg border border-line p-1 hover:bg-surface-2" onClick={() => safe(() => bump(p.id, x.id, 1))}><Plus size={13} /></button>
+            </span>
+          </div>
         ))}
-      </ul>
-      <form className="mt-3 flex gap-2" onSubmit={(e) => { e.preventDefault(); if (safe(() => addMetric(p.id, label))) setLabel(''); }}>
-        <input className={input} placeholder="Add a number to track, e.g. Connections accepted" value={label} disabled={locked} onChange={(e) => setLabel(e.target.value)} />
-        <Btn type="submit" disabled={locked}><Plus size={14} /> Add</Btn>
-      </form>
+      </div>
     </div>
   );
 }
 
 function OwnedProject({ p, color }: { p: Project; color: string }) {
-  const { bump, addMeeting, postUpdate } = useStore();
+  const { addMeeting, postUpdate } = useStore();
   const [m, setM] = useState({ company: '', contact: '', date: day(1), time: '11:00' });
   const [update, setUpdate] = useState('');
   return (
@@ -84,21 +135,7 @@ function OwnedProject({ p, color }: { p: Project; color: string }) {
           <TargetsTable p={p} />
         </div>
 
-        <div className="rounded-2xl border border-line p-4">
-          <p className="mb-3 font-semibold">Update this week's numbers</p>
-          <div className="grid gap-2 sm:grid-cols-2">
-            {p.metrics.map((x) => (
-              <div key={x.id} className="flex items-center justify-between gap-2 text-sm">
-                <span className="text-muted">{x.label}</span>
-                <span className="flex items-center gap-1">
-                  <button aria-label={`Minus ${x.label}`} className="focus-ring rounded-lg border border-line p-1 hover:bg-surface-2" onClick={() => safe(() => bump(p.id, x.id, -1))}><Minus size={13} /></button>
-                  <b className="w-16 text-center">{(p.week[x.id] ?? 0)}{p.weekLocked && <span className="font-normal text-muted">/{(p.weekTarget[x.id] ?? 0)}</span>}</b>
-                  <button aria-label={`Plus ${x.label}`} className="focus-ring rounded-lg border border-line p-1 hover:bg-surface-2" onClick={() => safe(() => bump(p.id, x.id, 1))}><Plus size={13} /></button>
-                </span>
-              </div>
-            ))}
-          </div>
-        </div>
+        <WeekNumbers p={p} />
 
         <div className="rounded-2xl border border-line p-4">
           <p className="mb-3 font-semibold">Meetings</p>

@@ -2,7 +2,8 @@ import { useMemo } from 'react';
 import { CalendarClock, Check, X } from 'lucide-react';
 import { toast } from '@/components';
 import { day, isLeadRole, PEOPLE } from '../data';
-import { efficiency, first, useStore, nameOf } from '../store';
+import { first, onTimeRate, useStore, nameOf } from '../store';
+import { Link } from 'react-router-dom';
 import { Avatar, Btn, Card, Chip, H2, PROJECT_COLORS, ago, safe } from '../ui';
 import { ReviewRow, TaskRow } from './TaskCard';
 import { Timeline } from './Timeline';
@@ -54,7 +55,7 @@ function ReviewLog() {
 
 /** Dashboard for resources and project managers — the same view for both. */
 export function TeamDashboard() {
-  const { me, tasks, projects } = useStore();
+  const { me, tasks, projects, daily } = useStore();
   const person = PEOPLE.find((p) => p.id === me);
   const today = day(0);
   const myTasks = useMemo(() => tasks.filter((t) => t.assigneeId === me && (t.status !== 'done' || t.date === today)), [tasks, me, today]);
@@ -64,10 +65,10 @@ export function TeamDashboard() {
   }, [projects, myTasks, me]);
   if (!person) return null;
 
-  const totalHours = plan.reduce((s, x) => s + x.hours, 0);
   const carried = myTasks.filter((t) => t.date < today).length;
   const logged = myTasks.filter((t) => t.date === today && t.minutes).reduce((s, t) => s + (t.minutes ?? 0), 0);
-  const eff = efficiency(tasks.filter((t) => t.assigneeId === me));
+  const rate = onTimeRate(tasks.filter((t) => t.assigneeId === me));
+  const dayPlan = daily[`${me}|${today}`]?.plan ?? [];
 
   return (
     <div className="space-y-6">
@@ -76,23 +77,15 @@ export function TeamDashboard() {
           <h1 className="text-2xl font-bold">Good to see you, {first(me)}</h1>
           <p className="text-sm text-muted">{new Date().toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' })}</p>
         </div>
-        {eff != null && <Chip tone="sky">{eff}% efficiency</Chip>}
+        {rate && <Chip tone="sky">{rate.onTime} of {rate.total} tasks on time</Chip>}
       </div>
 
       <Spotlights />
 
       <Card>
-        <H2 right={<span className="text-xs text-muted">{totalHours}h planned{carried > 0 && ` · ${carried} carried over from yesterday`}</span>}>My day</H2>
-        <DayTracker loggedMinutes={logged} />
-        {totalHours > 0 && (
-          <div className="mt-5 flex h-9 overflow-hidden rounded-xl text-xs font-semibold text-white">
-            {plan.filter((x) => x.hours > 0).map((x) => (
-              <div key={x.p.id} className="flex items-center justify-center truncate px-2" style={{ width: `${(x.hours / totalHours) * 100}%`, background: x.color }} title={`${x.p.name}: ${x.hours}h`}>
-                {x.hours}h · {x.p.client}
-              </div>
-            ))}
-          </div>
-        )}
+        <H2 right={<span className="text-xs text-muted">{carried > 0 && `${carried} carried over from yesterday`}</span>}>My day</H2>
+        <DayTracker blocks={dayPlan} loggedMinutes={logged} />
+        <Link to="/daily" className="focus-ring mt-3 inline-block rounded-lg text-sm font-semibold text-accent-ink hover:underline">{dayPlan.length ? 'Edit day plan →' : 'Plan your day in Daily update →'}</Link>
       </Card>
 
       <ReviewQueue />
