@@ -364,7 +364,7 @@ export const useStore = create<Data & Actions>()(
     },
     {
       name: 'ls-tracker-v2',
-      version: 6,
+      version: 7,
       // Old or unreadable saved data falls back to a fresh demo instead of crashing.
       migrate: () => seed() as never,
       merge: (persisted, current) => {
@@ -464,6 +464,7 @@ export function defaultPlan(projects: Project[], personId: string): DayBlock[] {
 function seedDaily(): Record<string, DailyUpdate> {
   // Udhaya already planned her morning today and wrote yesterday's end-of-day.
   const y = day(-1);
+  const at = (h: number, m: number) => new Date(new Date().setHours(h, m, 0, 0)).toISOString();
   return {
     [`udhaya|${day(0)}`]: {
       ...emptyDaily(),
@@ -475,6 +476,35 @@ function seedDaily(): Record<string, DailyUpdate> {
       sodNote: 'Finish the QBR deck first, then personalised L1s.',
       sodTargets: { northwind: { messages: 60 } },
       sodAt: new Date(new Date().setHours(10, 5, 0, 0)).toISOString(),
+    },
+    [`bharath|${day(0)}`]: {
+      ...emptyDaily(),
+      plan: [{ id: 'b4', start: '10:00', end: '19:00', projectId: 'northwind', taskIds: [] }],
+      sodNote: 'Telecalling block in the morning, emails after lunch.',
+      sodTargets: { northwind: { calls: 25, responses: 4 } },
+      sodAt: at(10, 12),
+      eodNote: 'Great call day — 2 people asked for a demo next week.',
+      eodActuals: { northwind: { calls: 28, responses: 5, interest: 2 } },
+      eodAt: at(18, 40),
+    },
+    [`sachi|${day(0)}`]: {
+      ...emptyDaily(),
+      plan: [
+        { id: 'b5', start: '10:00', end: '12:00', projectId: 'helios', taskIds: [], custom: { title: 'Helios pitch deck fixes for CFO call', priority: true, targetQty: 8, unit: 'slides', projectId: 'helios' } },
+        { id: 'b6', start: '12:00', end: '19:00', projectId: 'helios', taskIds: [] },
+      ],
+      sodNote: 'Deck fixes first (urgent), then L2 follow-ups.',
+      sodTargets: { helios: { messages: 80, responses: 6 } },
+      sodAt: at(10, 3),
+    },
+    [`bheeshma|${day(0)}`]: {
+      ...emptyDaily(),
+      sodNote: 'Review the team queue by noon, client call at 3.',
+      sodTargets: { northwind: { meetings: 1, interest: 2 } },
+      sodAt: at(10, 20),
+      eodNote: 'Approved 4 reviews, booked Acme Cloud for tomorrow.',
+      eodActuals: { northwind: { meetings: 1, interest: 3 } },
+      eodAt: at(18, 55),
     },
     [`udhaya|${y}`]: {
       ...emptyDaily(),

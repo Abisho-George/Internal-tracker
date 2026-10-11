@@ -10,6 +10,7 @@ import Projects from './pages/Projects';
 import LeadProjects from './pages/LeadProjects';
 import Profile from './pages/Profile';
 import DailyUpdate from './pages/DailyUpdate';
+import TeamDaily from './pages/TeamDaily';
 import Assign from './pages/Assign';
 import People from './pages/People';
 import Chat from './pages/Chat';
@@ -116,7 +117,7 @@ function Shell() {
           <Routes>
             <Route path="/" element={lead ? <LeadDashboard /> : <TeamDashboard />} />
             <Route path="/projects" element={lead ? <LeadProjects /> : <Projects />} />
-            <Route path="/daily" element={<DailyUpdate />} />
+            <Route path="/daily" element={lead ? <TeamDaily /> : <DailyUpdate />} />
             <Route path="/profile" element={<Profile />} />
             {(lead || ownsProject) && <Route path="/assign" element={<Assign key={me} />} />}
             {lead && <Route path="/people" element={<People />} />}
