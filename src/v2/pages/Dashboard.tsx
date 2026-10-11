@@ -2,8 +2,8 @@ import { useMemo } from 'react';
 import { CalendarClock, Check, X } from 'lucide-react';
 import { toast } from '@/components';
 import { day, isLeadRole, PEOPLE } from '../data';
-import { efficiency, first, useStore } from '../store';
-import { Avatar, Btn, Card, Chip, H2, PROJECT_COLORS, safe } from '../ui';
+import { efficiency, first, useStore, nameOf } from '../store';
+import { Avatar, Btn, Card, Chip, H2, PROJECT_COLORS, ago, safe } from '../ui';
 import { ReviewRow, TaskRow } from './TaskCard';
 import { Timeline } from './Timeline';
 import { DayTracker, ProjectBlock, Spotlights, TargetsTable } from './Widgets';
@@ -25,6 +25,33 @@ function ReviewQueue() {
   );
 }
 
+/** Log of everything the viewer has reviewed (approved or sent back), newest first. */
+function ReviewLog() {
+  const { me, tasks, projects } = useStore();
+  const log = tasks
+    .flatMap((t) => t.reviews.filter((r) => r.by === me).map((r) => ({ t, r })))
+    .sort((a, b) => b.r.at.localeCompare(a.r.at));
+  if (!log.length) return null;
+  return (
+    <Card className="p-0">
+      <div className="flex items-center justify-between border-b border-line px-5 py-3">
+        <h2 className="font-bold">Reviewed by you</h2>
+        <span className="text-xs text-muted">{log.length} reviews</span>
+      </div>
+      <ul className="max-h-72 divide-y divide-line overflow-y-auto">
+        {log.map(({ t, r }, i) => (
+          <li key={t.id + i} className="flex flex-wrap items-center gap-3 px-5 py-2.5 text-sm">
+            <Avatar id={t.assigneeId} size="sm" />
+            <span className="min-w-0 flex-1"><b className="first-letter:uppercase">{t.title}</b> <span className="text-muted">· {first(t.assigneeId)} · {projects.find((p) => p.id === t.projectId)?.name}</span></span>
+            <Chip tone={r.verdict === 'approved' ? 'mint' : 'butter'}>{r.verdict === 'approved' ? 'Approved' : 'Feedback sent'}</Chip>
+            <span className="w-24 text-right text-xs text-muted">{ago(r.at)}</span>
+          </li>
+        ))}
+      </ul>
+    </Card>
+  );
+}
+
 /** Dashboard for resources and project managers — the same view for both. */
 export function TeamDashboard() {
   const { me, tasks, projects } = useStore();
@@ -35,7 +62,6 @@ export function TeamDashboard() {
     const ids = new Set([...projects.filter((p) => p.status === 'active' && (p.hours[me] ?? 0) > 0).map((p) => p.id), ...myTasks.map((t) => t.projectId)]);
     return projects.map((p, i) => ({ p, color: PROJECT_COLORS[i % PROJECT_COLORS.length], hours: p.hours[me] ?? 0 })).filter((x) => ids.has(x.p.id));
   }, [projects, myTasks, me]);
-  const myProjectsWithTargets = projects.map((p, i) => ({ p, color: PROJECT_COLORS[i % PROJECT_COLORS.length] })).filter(({ p }) => p.status === 'active' && (p.pmId === me || p.teamIds.includes(me)));
   if (!person) return null;
 
   const totalHours = plan.reduce((s, x) => s + x.hours, 0);
@@ -71,20 +97,7 @@ export function TeamDashboard() {
 
       <ReviewQueue />
 
-      {myProjectsWithTargets.length > 0 && (
-        <Card>
-          <H2>Targets for my projects</H2>
-          <div className="grid gap-5 lg:grid-cols-2">
-            {myProjectsWithTargets.map(({ p, color }) => (
-              <div key={p.id} className="rounded-2xl border border-line p-4" style={{ borderLeft: `5px solid ${color}` }}>
-                <div className="mb-2 flex items-center justify-between gap-2"><p className="font-semibold">{p.name}</p><Chip tone="sky">PM {first(p.pmId)}</Chip></div>
-                <div className="mb-2 flex justify-end gap-6 text-[11px] font-semibold uppercase text-muted"><span className="w-24 text-right">This week</span><span className="w-24 text-right">This month</span></div>
-                <TargetsTable p={p} />
-              </div>
-            ))}
-          </div>
-        </Card>
-      )}
+      <ReviewLog />
 
       <div className="space-y-5">
         {plan.length === 0 && <Card><p className="py-6 text-center text-muted">No projects or tasks for today yet ☀️</p></Card>}
@@ -138,13 +151,14 @@ export function LeadDashboard() {
       )}
 
       <ReviewQueue />
+      <ReviewLog />
 
       <div className="grid gap-5 lg:grid-cols-2">
         {active.map((p, i) => (
           <ProjectBlock key={p.id} color={PROJECT_COLORS[i % PROJECT_COLORS.length]} title={p.name} meta={`PM ${first(p.pmId)}`}>
             <div className="space-y-4 p-4">
               <Timeline project={p} />
-              <div className="flex justify-end gap-6 text-[11px] font-semibold uppercase text-muted"><span className="w-24 text-right">This week</span><span className="w-24 text-right">This month</span></div>
+              
               <TargetsTable p={p} />
             </div>
           </ProjectBlock>
@@ -175,7 +189,7 @@ export function LeadDashboard() {
               return (
                 <li key={p.id} className="flex items-center gap-3 py-2 text-sm">
                   <Avatar id={p.id} size="sm" />
-                  <span className="flex-1">{p.name} <span className="text-xs text-muted">· {p.title}</span></span>
+                  <span className="flex-1">{nameOf(p.id)} <span className="text-xs text-muted">· {p.title}</span></span>
                   <Chip tone="mint">{mine.filter((t) => t.status === 'done').length} done</Chip>
                   <Chip tone="lavender">{mine.filter((t) => t.status === 'in_review').length} in review</Chip>
                   <Chip tone="grey">{open} open</Chip>

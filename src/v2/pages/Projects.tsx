@@ -80,6 +80,11 @@ function OwnedProject({ p, color }: { p: Project; color: string }) {
         </div>
 
         <div className="rounded-2xl border border-line p-4">
+          <p className="mb-3 font-semibold">Progress against targets</p>
+          <TargetsTable p={p} />
+        </div>
+
+        <div className="rounded-2xl border border-line p-4">
           <p className="mb-3 font-semibold">Update this week's numbers</p>
           <div className="grid gap-2 sm:grid-cols-2">
             {p.metrics.map((x) => (

@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react';
-import { BellRing, Pencil, Send, Star } from 'lucide-react';
+import { BellRing, History, Pencil, Plus, Send, ShoppingBasket, Star, Trash2 } from 'lucide-react';
 import { toast } from '@/components';
-import { isLeadRole, PEOPLE, TASK_TYPES, targetFor, type Task } from '../data';
-import { first, useStore } from '../store';
+import { day, isLeadRole, PEOPLE, TASK_TYPES, targetFor, taskTitle, type Task } from '../data';
+import { first, useStore, type AssignInput } from '../store';
 import { Avatar, Btn, Card, Chip, H2, STATUS, cx, fmtMin, input, safe } from '../ui';
 
 function AssignedRow({ t }: { t: Task }) {
@@ -49,8 +49,11 @@ function AssignedRow({ t }: { t: Task }) {
   );
 }
 
+type CartItem = AssignInput & { key: string };
+let cartKey = 0;
+
 export default function Assign() {
-  const { me, tasks, projects, assign } = useStore();
+  const { me, tasks, projects, assignMany } = useStore();
   const lead = isLeadRole(PEOPLE.find((p) => p.id === me)?.role);
   const choices = projects.filter((p) => p.status === 'active' && (lead || p.pmId === me));
   const [projectId, setProjectId] = useState(choices[0]?.id ?? '');
@@ -65,6 +68,7 @@ export default function Assign() {
   const [target, setTarget] = useState(60);
   const [targetEdited, setTargetEdited] = useState(false);
   const [title, setTitle] = useState('');
+  const [cart, setCart] = useState<CartItem[]>([]);
   const type = TASK_TYPES.find((t) => t.id === typeId);
   const assignee = people.some((p) => p.id === assigneeId) ? assigneeId : people[0]?.id;
   const auto = type ? targetFor(typeId, qty, type.variants ? variant : undefined) : target;
@@ -73,74 +77,127 @@ export default function Assign() {
 
   if (!project) return <Card><p className="py-8 text-center text-muted">You'll be able to assign tasks once you own an approved project.</p></Card>;
 
+  const projName = (id: string) => projects.find((p) => p.id === id)?.name ?? '';
+  const label = (i: AssignInput) => i.title?.trim() || (i.typeId === 'custom' ? `${i.qty} ${i.customName || 'custom task'}` : taskTitle(i.typeId, i.qty, i.variant));
+  const addToList = () => {
+    if (!assignee) return toast({ title: 'Pick who the task is for', tone: 'info', emoji: '⚠️' });
+    if (!(qty > 0) || !(target > 0)) return toast({ title: 'Quantity and target time must be above zero', tone: 'info', emoji: '⚠️' });
+    if (typeId === 'custom' && !customName.trim()) return toast({ title: 'Name the custom task', tone: 'info', emoji: '⚠️' });
+    setCart((c) => [...c, { key: `c${++cartKey}`, typeId, variant: type?.variants ? variant : undefined, customName, customUnit, qty, targetMinutes: target, projectId: project.id, assigneeId: assignee, title }]);
+    setTitle('');
+  };
+  const loadYesterday = () => {
+    const y = tasks.filter((t) => t.assignedById === me && t.date === day(-1));
+    if (!y.length) return toast({ title: 'No tasks were assigned yesterday', tone: 'info' });
+    setCart((c) => [...c, ...y.map((t) => ({
+      key: `c${++cartKey}`, typeId: t.typeId, variant: t.variant, customName: t.typeId === 'custom' ? t.title.replace(/^\d+\s*/, '') : undefined,
+      customUnit: t.unit, qty: t.qty, targetMinutes: t.targetMinutes, projectId: t.projectId, assigneeId: t.assigneeId, title: t.typeId === 'custom' ? t.title : '',
+    }))]);
+    toast({ title: `Added ${y.length} task${y.length > 1 ? 's' : ''} from yesterday — tweak and assign`, tone: 'success' });
+  };
+  const update = (key: string, p: Partial<CartItem>) => setCart((c) => c.map((i) => (i.key === key ? { ...i, ...p } : i)));
+  const totalMin = cart.reduce((s, i) => s + (i.targetMinutes || 0), 0);
+  const byPerson = [...new Set(cart.map((i) => i.assigneeId))];
+
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl font-bold">Assign tasks</h1>
-      <Card>
-        <H2>New task</H2>
-        <div className="space-y-5">
-          <div>
-            <p className="mb-1.5 text-xs font-bold uppercase text-muted">Project</p>
-            <div className="flex flex-wrap gap-2">
-              {choices.map((p) => <Btn key={p.id} tone={p.id === project.id ? 'primary' : 'ghost'} className="border border-line" onClick={() => setProjectId(p.id)}>{p.name}</Btn>)}
-            </div>
-            {project.description && <p className="mt-2 rounded-xl bg-surface-2 p-3 text-sm text-muted">{project.description}</p>}
-          </div>
-          <div>
-            <p className="mb-1.5 text-xs font-bold uppercase text-muted">Assign to</p>
-            <div className="flex flex-wrap gap-2">
-              {people.length === 0 && <p className="text-sm text-muted">No teammates on this project yet.</p>}
-              {people.map((p) => (
-                <button key={p.id} onClick={() => setAssigneeId(p.id)} className={cx('focus-ring flex items-center gap-2 rounded-full border py-1 pl-1 pr-3 text-sm', p.id === assignee ? 'border-accent bg-accent-soft font-semibold' : 'border-line')}>
-                  <Avatar id={p.id} size="sm" /> {first(p.id)} <span className="text-xs text-muted">{p.title}</span>
-                </button>
-              ))}
-            </div>
-          </div>
-          <div>
-            <p className="mb-1.5 text-xs font-bold uppercase text-muted">Task</p>
-            <div className="flex flex-wrap gap-2">
-              {TASK_TYPES.map((t) => (
-                <Btn key={t.id} tone={t.id === typeId ? 'primary' : 'ghost'} className="border border-line" onClick={() => { setTypeId(t.id); setTargetEdited(false); setQty(t.id === 'deck' ? 1 : t.id === 'model' ? 10 : 30); }}>{t.name}</Btn>
-              ))}
-              <Btn tone={typeId === 'custom' ? 'primary' : 'ghost'} className="border border-dashed border-line" onClick={() => { setTypeId('custom'); setTargetEdited(true); }}>+ Custom task</Btn>
-            </div>
-            {type?.variants && (
-              <div className="mt-2 flex flex-wrap gap-2">{type.variants.map((v) => <Btn key={v} tone={v === variant ? 'soft' : 'ghost'} onClick={() => { setVariant(v); setTargetEdited(false); }}>{v}</Btn>)}</div>
-            )}
-            {typeId === 'custom' && (
-              <div className="mt-3 grid gap-2 sm:grid-cols-2">
-                <input className={input} placeholder="Task name, e.g. LinkedIn profile audit" value={customName} onChange={(e) => setCustomName(e.target.value)} />
-                <input className={input} placeholder="Unit, e.g. profiles" value={customUnit} onChange={(e) => setCustomUnit(e.target.value)} />
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h1 className="text-2xl font-bold">Assign tasks</h1>
+        <Btn tone="soft" onClick={loadYesterday}><History size={14} /> Yesterday's tasks</Btn>
+      </div>
+      <div className="grid gap-6 xl:grid-cols-[1fr_400px]">
+        <Card>
+          <H2>Add a task</H2>
+          <div className="space-y-5">
+            <div>
+              <p className="mb-1.5 text-xs font-bold uppercase text-muted">Project</p>
+              <div className="flex flex-wrap gap-2">
+                {choices.map((p) => <Btn key={p.id} tone={p.id === project.id ? 'primary' : 'ghost'} className="border border-line" onClick={() => setProjectId(p.id)}>{p.name}</Btn>)}
               </div>
-            )}
+              {project.description && <p className="mt-2 rounded-xl bg-surface-2 p-3 text-sm text-muted">{project.description}</p>}
+            </div>
+            <div>
+              <p className="mb-1.5 text-xs font-bold uppercase text-muted">Assign to</p>
+              <div className="flex flex-wrap gap-2">
+                {people.length === 0 && <p className="text-sm text-muted">No teammates on this project yet.</p>}
+                {people.map((p) => (
+                  <button key={p.id} onClick={() => setAssigneeId(p.id)} className={cx('focus-ring flex items-center gap-2 rounded-full border py-1 pl-1 pr-3 text-sm', p.id === assignee ? 'border-accent bg-accent-soft font-semibold' : 'border-line')}>
+                    <Avatar id={p.id} size="sm" /> {first(p.id)} <span className="text-xs text-muted">{p.title}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div>
+              <p className="mb-1.5 text-xs font-bold uppercase text-muted">Task</p>
+              <div className="flex flex-wrap gap-2">
+                {TASK_TYPES.map((t) => (
+                  <Btn key={t.id} tone={t.id === typeId ? 'primary' : 'ghost'} className="border border-line" onClick={() => { setTypeId(t.id); setTargetEdited(false); setQty(t.id === 'deck' ? 1 : t.id === 'model' ? 10 : 30); }}>{t.name}</Btn>
+                ))}
+                <Btn tone={typeId === 'custom' ? 'primary' : 'ghost'} className="border border-dashed border-line" onClick={() => { setTypeId('custom'); setTargetEdited(true); }}>+ Custom task</Btn>
+              </div>
+              {type?.variants && <div className="mt-2 flex flex-wrap gap-2">{type.variants.map((v) => <Btn key={v} tone={v === variant ? 'soft' : 'ghost'} onClick={() => { setVariant(v); setTargetEdited(false); }}>{v}</Btn>)}</div>}
+              {typeId === 'custom' && (
+                <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                  <input className={input} placeholder="Task name, e.g. LinkedIn profile audit" value={customName} onChange={(e) => setCustomName(e.target.value)} />
+                  <input className={input} placeholder="Unit, e.g. profiles" value={customUnit} onChange={(e) => setCustomUnit(e.target.value)} />
+                </div>
+              )}
+            </div>
+            <div className="flex flex-wrap items-end gap-4">
+              <label className="text-sm font-semibold">Quantity<input type="number" min={1} className={cx(input, 'mt-1 w-28')} value={qty} onChange={(e) => setQty(+e.target.value)} /></label>
+              <label className="text-sm font-semibold">Target time (min)<input type="number" min={1} className={cx(input, 'mt-1 w-32')} value={target} onChange={(e) => { setTarget(+e.target.value); setTargetEdited(true); }} /></label>
+              {type && targetEdited && <Btn tone="ghost" onClick={() => setTargetEdited(false)}>Reset to {fmtMin(auto)}</Btn>}
+              <label className="min-w-[200px] flex-1 text-sm font-semibold">Title (optional)<input className={cx(input, 'mt-1')} placeholder="e.g. Northwind QBR deck" value={title} onChange={(e) => setTitle(e.target.value)} /></label>
+            </div>
+            <p className="text-sm text-muted">{type ? `Ideal pace ${type.ideal} · ` : ''}Target {fmtMin(target > 0 ? target : 0)}{lead && <> · <Chip tone="coral"><Star size={11} /> Sent as priority</Chip></>}</p>
+            <Btn tone="soft" onClick={addToList}><Plus size={14} /> Add to list</Btn>
           </div>
-          <div className="flex flex-wrap items-end gap-4">
-            <label className="text-sm font-semibold">Quantity<input type="number" min={1} className={cx(input, 'mt-1 w-28')} value={qty} onChange={(e) => setQty(+e.target.value)} /></label>
-            <label className="text-sm font-semibold">
-              Target time (min)
-              <input type="number" min={1} className={cx(input, 'mt-1 w-32')} value={target} onChange={(e) => { setTarget(+e.target.value); setTargetEdited(true); }} />
-            </label>
-            {type && targetEdited && <Btn tone="ghost" onClick={() => setTargetEdited(false)}>Reset to {fmtMin(auto)}</Btn>}
-            <label className="min-w-[200px] flex-1 text-sm font-semibold">Title (optional)<input className={cx(input, 'mt-1')} placeholder="e.g. Northwind QBR deck" value={title} onChange={(e) => setTitle(e.target.value)} /></label>
+        </Card>
+
+        <Card className="flex flex-col xl:sticky xl:top-20 xl:max-h-[calc(100vh-7rem)]">
+          <H2 right={<Chip tone="sky">{cart.length} task{cart.length === 1 ? '' : 's'}</Chip>}><ShoppingBasket size={18} className="mr-1.5 inline" /> Today's list</H2>
+          {cart.length === 0 ? (
+            <p className="py-10 text-center text-sm text-muted">Add tasks on the left, or pull in yesterday's tasks.<br />Everything collects here before you assign.</p>
+          ) : (
+            <div className="-mx-2 flex-1 space-y-4 overflow-y-auto px-2">
+              {byPerson.map((pid) => (
+                <div key={pid}>
+                  <p className="mb-1.5 flex items-center gap-2 text-sm font-semibold"><Avatar id={pid} size="sm" /> {first(pid)} <span className="text-xs font-normal text-muted">· {fmtMin(cart.filter((i) => i.assigneeId === pid).reduce((s, i) => s + (i.targetMinutes || 0), 0))}</span></p>
+                  <ul className="space-y-2">
+                    {cart.filter((i) => i.assigneeId === pid).map((i) => (
+                      <li key={i.key} className="rounded-xl border border-line bg-surface-2 p-2.5 text-sm">
+                        <div className="flex items-start gap-2">
+                          <span className="min-w-0 flex-1"><b className="first-letter:uppercase">{label(i)}</b><span className="block text-xs text-muted">{projName(i.projectId)}</span></span>
+                          <button aria-label={`Remove ${label(i)}`} className="focus-ring rounded-lg p-1 text-muted hover:bg-line hover:text-coral-ink" onClick={() => setCart((c) => c.filter((x) => x.key !== i.key))}><Trash2 size={14} /></button>
+                        </div>
+                        <div className="mt-2 flex gap-2">
+                          <label className="flex items-center gap-1 text-xs text-muted">Qty<input type="number" min={1} className={cx(input, 'w-20 py-1')} value={i.qty} onChange={(e) => {
+                            const q = +e.target.value;
+                            update(i.key, { qty: q, ...(TASK_TYPES.some((t) => t.id === i.typeId) ? { targetMinutes: targetFor(i.typeId, q, i.variant) } : {}) });
+                          }} /></label>
+                          <label className="flex items-center gap-1 text-xs text-muted">Min<input type="number" min={1} className={cx(input, 'w-20 py-1')} value={i.targetMinutes} onChange={(e) => update(i.key, { targetMinutes: +e.target.value })} /></label>
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ))}
+            </div>
+          )}
+          <div className="mt-4 border-t border-line pt-4">
+            <p className="mb-3 flex justify-between text-sm"><span className="text-muted">Total target time</span><b>{fmtMin(totalMin)}</b></p>
+            <div className="flex gap-2">
+              <Btn className="flex-1" disabled={!cart.length} onClick={() => {
+                if (safe(() => assignMany(cart))) {
+                  toast({ title: `Assigned ${cart.length} task${cart.length > 1 ? 's' : ''} to ${byPerson.map(first).join(', ')}`, tone: 'success' });
+                  setCart([]);
+                }
+              }}><Send size={14} /> Assign all</Btn>
+              {cart.length > 0 && <Btn tone="ghost" className="border border-line" onClick={() => setCart([])}>Clear</Btn>}
+            </div>
           </div>
-          <p className="text-sm text-muted">
-            {type ? `Ideal pace ${type.ideal} · ` : ''}Target {fmtMin(target > 0 ? target : 0)}
-            {lead && <> · <Chip tone="coral"><Star size={11} /> Sent as priority</Chip></>}
-          </p>
-          <Btn
-            disabled={!assignee}
-            onClick={() => {
-              if (safe(() => assign({ typeId, variant: type?.variants ? variant : undefined, customName, customUnit, qty, targetMinutes: target, projectId: project.id, assigneeId: assignee ?? '', title }))) {
-                toast({ title: `Task sent to ${first(assignee)}`, tone: 'success' });
-                setTitle('');
-              }
-            }}
-          >
-            <Send size={14} /> Assign
-          </Btn>
-        </div>
-      </Card>
+        </Card>
+      </div>
 
       <Card>
         <H2 right={<span className="text-xs text-muted">{assigned.length} total</span>}>Tasks you assigned</H2>

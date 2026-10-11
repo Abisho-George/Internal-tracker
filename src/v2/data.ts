@@ -182,6 +182,8 @@ export interface Task {
   createdAt: string;
   date: string;
   reminders: number;
+  /** Everything a reviewer did on this task (powers the reviewed-tasks log). */
+  reviews: { by: string; verdict: 'approved' | 'feedback'; at: string }[];
 }
 
 export function targetFor(typeId: string, qty: number, variant?: string): number {
@@ -210,16 +212,17 @@ function t(id: string, typeId: string, qty: number, assigneeId: string, projectI
   return {
     id, typeId, qty, assigneeId, projectId, assignedById, status, unit: type.unit,
     title: taskTitle(typeId, qty, extra.variant), targetMinutes: targetFor(typeId, qty, extra.variant),
-    priority: false, feedback: [], createdAt: now(), date: day(0), reminders: 0, ...extra,
+    priority: false, feedback: [], createdAt: now(), date: day(0), reminders: 0, reviews: [], ...extra,
   };
 }
 
 export function seedTasks(): Task[] {
+  const hAgo = (h: number) => new Date(Date.now() - h * 3600_000).toISOString();
   return [
-    t('t1', 'model', 10, 'asha', 'northwind', 'meera', 'done', { doneQty: 10, minutes: 28, reviewerId: 'meera' }),
+    t('t1', 'model', 10, 'asha', 'northwind', 'meera', 'done', { doneQty: 10, minutes: 28, reviewerId: 'meera', reviews: [{ by: 'meera', verdict: 'approved', at: hAgo(3) }] }),
     t('t2', 'prospect', 30, 'asha', 'northwind', 'meera', 'in_review', { doneQty: 30, minutes: 55, reviewerId: 'meera' }),
     t('t3', 'l1', 30, 'asha', 'northwind', 'meera', 'todo', { variant: 'Personalised' }),
-    t('t4', 'l2', 40, 'asha', 'northwind', 'meera', 'changes', { doneQty: 40, minutes: 62, reviewerId: 'meera', feedback: [{ by: 'meera', text: 'Lovely tone! Please add the case-study link in the last 10.', at: now() }] }),
+    t('t4', 'l2', 40, 'asha', 'northwind', 'meera', 'changes', { doneQty: 40, minutes: 62, reviewerId: 'meera', feedback: [{ by: 'meera', text: 'Lovely tone! Please add the case-study link in the last 10.', at: now() }], reviews: [{ by: 'meera', verdict: 'feedback', at: hAgo(1) }] }),
     t('t5', 'deck', 1, 'asha', 'northwind', 'kabir', 'todo', { priority: true, title: 'Northwind QBR deck' }),
     t('t12', 'followup', 25, 'asha', 'northwind', 'meera', 'in_progress', { date: day(-1) }),
     t('t13', 'email', 30, 'asha', 'helios', 'arjun', 'todo'),
@@ -229,8 +232,8 @@ export function seedTasks(): Task[] {
     t('t17', 'l1', 45, 'meera', 'bd', 'meera', 'in_progress', { variant: 'Semi-personalised' }),
     t('t8', 'l1', 60, 'rohan', 'northwind', 'meera', 'in_review', { variant: 'Templated', doneQty: 60, minutes: 58, reviewerId: 'meera' }),
     t('t9', 'deck', 1, 'neha', 'helios', 'kabir', 'in_review', { doneQty: 1, minutes: 70, priority: true, title: 'Helios pitch deck v2', reviewerId: 'kabir' }),
-    t('t10', 'whatsapp', 60, 'rohan', 'northwind', 'meera', 'done', { doneQty: 60, minutes: 57, reviewerId: 'meera' }),
+    t('t10', 'whatsapp', 60, 'rohan', 'northwind', 'meera', 'done', { doneQty: 60, minutes: 57, reviewerId: 'meera', reviews: [{ by: 'meera', verdict: 'approved', at: hAgo(5) }] }),
     t('t18', 'email', 30, 'rohan', 'northwind', 'meera', 'todo', { date: day(-1), reminders: 1 }),
-    t('t11', 'prospect', 30, 'neha', 'helios', 'arjun', 'done', { doneQty: 30, minutes: 52, reviewerId: 'arjun' }),
+    t('t11', 'prospect', 30, 'neha', 'helios', 'arjun', 'done', { doneQty: 30, minutes: 52, reviewerId: 'arjun', reviews: [{ by: 'arjun', verdict: 'approved', at: hAgo(26) }] }),
   ];
 }

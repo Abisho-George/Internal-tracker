@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Plus, Users, VenetianMask } from 'lucide-react';
 import { Modal } from '@/components';
 import { PEOPLE } from '../data';
-import { first, useStore } from '../store';
+import { first, useStore, nameOf } from '../store';
 import { Avatar, Btn, cx, ago, input } from '../ui';
 
 /** Teams-style anonymous chat: list of chats on the left, the conversation on the right. */
@@ -117,7 +117,7 @@ export default function Chat({ onClose }: { onClose?: () => void }) {
                 onClick={() => setPicked((s) => (on ? s.filter((x) => x !== p.id) : [...s, p.id]))}
                 className={cx('focus-ring flex items-center gap-2 rounded-full border py-1 pl-1 pr-3 text-sm', on ? 'border-accent bg-accent-soft font-semibold' : 'border-line')}
               >
-                <Avatar id={p.id} size="sm" /> {p.name}
+                <Avatar id={p.id} size="sm" /> {nameOf(p.id)}
               </button>
             );
           })}

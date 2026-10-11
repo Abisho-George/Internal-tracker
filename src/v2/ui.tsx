@@ -1,5 +1,6 @@
 import type { ButtonHTMLAttributes, ReactNode } from 'react';
 import { PEOPLE, type Status } from './data';
+import { useStore } from './store';
 
 export const cx = (...c: (string | false | null | undefined)[]) => c.filter(Boolean).join(' ');
 
@@ -45,21 +46,16 @@ export function Chip({ tone = 'grey', children }: { tone?: string; children: Rea
   return <span className={cx('inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-semibold', TONE[tone])}>{children}</span>;
 }
 
-export function Avatar({ id, size = 'md' }: { id: string; size?: 'sm' | 'md' | 'lg' }) {
+export function Avatar({ id, size = 'md' }: { id: string; size?: 'sm' | 'md' | 'lg' | 'xl' }) {
   const p = PEOPLE.find((x) => x.id === id);
-  const initials = p ? p.name.split(' ').map((w) => w[0]).join('') : '?';
+  const prof = useStore((st) => st.profiles[id]);
+  const name = prof?.name?.trim() || p?.name;
+  const initials = name ? name.split(' ').map((w) => w[0]).slice(0, 2).join('') : '?';
+  const dim = size === 'sm' ? 'h-7 w-7 text-[11px]' : size === 'md' ? 'h-9 w-9 text-xs' : size === 'lg' ? 'h-14 w-14 text-lg' : 'h-24 w-24 text-3xl';
   return (
-    <span
-      title={p?.name}
-      className={cx(
-        'inline-flex shrink-0 items-center justify-center rounded-full font-bold',
-        TONE[p?.color ?? 'grey'],
-        size === 'sm' && 'h-7 w-7 text-[11px]',
-        size === 'md' && 'h-9 w-9 text-xs',
-        size === 'lg' && 'h-14 w-14 text-lg',
-      )}
-    >
-      {initials}
+    <span title={name} className={cx('relative inline-flex shrink-0 items-center justify-center rounded-full font-bold', TONE[p?.color ?? 'grey'], dim)}>
+      {prof?.photo ? <img src={prof.photo} alt={name ?? ''} className="h-full w-full rounded-full object-cover" /> : initials}
+      {prof?.emoji && size !== 'sm' && <span className="absolute -bottom-1 -right-1 flex h-[1.4em] w-[1.4em] items-center justify-center rounded-full bg-surface text-[0.55em] shadow">{prof.emoji}</span>}
     </span>
   );
 }

@@ -25,7 +25,7 @@ export default function LeadProjects() {
             <Timeline project={p} />
             <div className="grid gap-6 lg:grid-cols-[2fr_1fr]">
               <div>
-                <div className="mb-2 flex justify-end gap-6 text-[11px] font-semibold uppercase text-muted"><span className="w-24 text-right">This week</span><span className="w-24 text-right">This month</span></div>
+                
                 <TargetsTable p={p} />
               </div>
               <div className="space-y-4 text-sm">

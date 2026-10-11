@@ -10,8 +10,11 @@ export interface Notice { id: string; to: string; text: string; at: string; read
 export interface Conversation { id: string; name: string; memberIds: string[]; group: boolean }
 export interface ChatMsg { id: string; convId: string; alias: string; text: string; at: string }
 
+export interface Profile { name?: string; emoji?: string; photo?: string; accent?: string; dark?: boolean }
+
 interface Data {
   me: string;
+  profiles: Record<string, Profile>;
   tasks: Task[];
   projects: Project[];
   notices: Notice[];
@@ -40,6 +43,8 @@ interface Actions {
   approve: (id: string) => void;
   sendBack: (id: string, text: string) => void;
   assign: (a: AssignInput) => void;
+  assignMany: (items: AssignInput[]) => void;
+  setProfile: (id: string, patch: Profile) => void;
   editTask: (id: string, p: { qty: number; targetMinutes: number; title: string }) => void;
   remind: (id: string) => void;
   setTarget: (projectId: string, period: 'weekTarget' | 'monthTarget', metric: Metric, value: number) => void;
@@ -61,7 +66,12 @@ interface Actions {
 
 const uid = () => Math.random().toString(36).slice(2, 10);
 const iso = () => new Date().toISOString();
-export const first = (id?: string) => PEOPLE.find((p) => p.id === id)?.name.split(' ')[0] ?? 'Someone';
+/** Display name, honouring any name the person set on their profile. */
+export const nameOf = (id?: string) => {
+  const custom = useStore.getState().profiles[id ?? '']?.name?.trim();
+  return custom || PEOPLE.find((p) => p.id === id)?.name || 'Someone';
+};
+export const first = (id?: string) => nameOf(id).split(' ')[0];
 const roleOf = (id: string) => PEOPLE.find((p) => p.id === id)?.role;
 
 const ANIMALS = ['Otter', 'Panda', 'Koala', 'Heron', 'Falcon', 'Fox', 'Lynx', 'Robin'];
@@ -72,6 +82,7 @@ function seed(): Data {
   const ago = (m: number) => new Date(Date.now() - m * 60000).toISOString();
   return {
     me: 'asha',
+    profiles: {},
     tasks: seedTasks(),
     projects: seedProjects(),
     notices: [
@@ -137,13 +148,13 @@ export const useStore = create<Data & Actions>()(
         },
         approve: (id) => {
           const t = task(id);
-          patch(id, { status: 'done' });
+          patch(id, { status: 'done', reviews: [...t.reviews, { by: get().me, verdict: 'approved', at: iso() }] });
           notify(t.assigneeId, `${first(get().me)} approved ${t.title} ✓`);
         },
         sendBack: (id, text) => {
           const t = task(id);
           if (!text.trim()) throw new Error('Feedback cannot be empty.');
-          patch(id, { status: 'changes', feedback: [...t.feedback, { by: get().me, text: text.trim(), at: iso() }] });
+          patch(id, { status: 'changes', feedback: [...t.feedback, { by: get().me, text: text.trim(), at: iso() }], reviews: [...t.reviews, { by: get().me, verdict: 'feedback', at: iso() }] });
           notify(t.assigneeId, `${first(get().me)} left feedback on ${t.title}`);
         },
         assign: (a) => {
@@ -161,11 +172,35 @@ export const useStore = create<Data & Actions>()(
           const t: Task = {
             id: uid(), typeId: a.typeId, variant: a.variant, unit, qty: a.qty, targetMinutes: Math.round(a.targetMinutes),
             projectId: a.projectId, assigneeId: a.assigneeId, assignedById: me, priority, status: 'todo',
-            feedback: [], createdAt: iso(), date: day(0), reminders: 0, title,
+            feedback: [], createdAt: iso(), date: day(0), reminders: 0, reviews: [], title,
           };
           set((s) => ({ tasks: [t, ...s.tasks] }));
           notify(a.assigneeId, `${first(me)} gave you ${priority ? 'a priority task' : 'a task'}: ${title}`);
         },
+        assignMany: (items) => {
+          if (!items.length) throw new Error('Add at least one task to the list first.');
+          const me = get().me;
+          const priority = isLeadRole(roleOf(me));
+          const made: Task[] = items.map((a) => {
+            if (!a.assigneeId) throw new Error('Every task needs a person.');
+            if (!(a.qty > 0)) throw new Error('Quantity must be at least 1.');
+            if (!(a.targetMinutes > 0)) throw new Error('Target time must be at least 1 minute.');
+            const custom = a.typeId === 'custom';
+            if (custom && !a.customName?.trim()) throw new Error('Name the custom task.');
+            const type = TASK_TYPES.find((x) => x.id === a.typeId);
+            return {
+              id: uid(), typeId: a.typeId, variant: a.variant, unit: custom ? a.customUnit?.trim() || 'items' : type?.unit ?? 'items',
+              qty: a.qty, targetMinutes: Math.round(a.targetMinutes), projectId: a.projectId, assigneeId: a.assigneeId, assignedById: me,
+              priority, status: 'todo' as const, feedback: [], createdAt: iso(), date: day(0), reminders: 0, reviews: [],
+              title: a.title?.trim() || (custom ? `${a.qty} ${a.customName!.trim()}` : taskTitle(a.typeId, a.qty, a.variant)),
+            };
+          });
+          set((s) => ({ tasks: [...made, ...s.tasks] }));
+          const by = new Map<string, Task[]>();
+          made.forEach((t) => by.set(t.assigneeId, [...(by.get(t.assigneeId) ?? []), t]));
+          by.forEach((list, who) => notify(who, list.length === 1 ? `${first(me)} gave you ${priority ? 'a priority task' : 'a task'}: ${list[0].title}` : `${first(me)} gave you ${list.length} ${priority ? 'priority ' : ''}tasks for today`));
+        },
+        setProfile: (id, patch) => set((s) => ({ profiles: { ...s.profiles, [id]: { ...s.profiles[id], ...patch } } })),
         editTask: (id, p) => {
           const t = task(id);
           if (!(p.qty > 0) || !(p.targetMinutes > 0)) throw new Error('Quantity and target time must be above zero.');
@@ -281,7 +316,7 @@ export const useStore = create<Data & Actions>()(
     },
     {
       name: 'ls-tracker-v2',
-      version: 4,
+      version: 5,
       // Old or unreadable saved data falls back to a fresh demo instead of crashing.
       migrate: () => seed() as never,
       merge: (persisted, current) => {

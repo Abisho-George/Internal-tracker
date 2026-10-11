@@ -4,7 +4,7 @@ import { CartesianGrid, Line, LineChart, ReferenceLine, ResponsiveContainer, Too
 import { Modal } from '@/components';
 import { useChartColors } from '@/theme/useChartColors';
 import { dailyHistory, PEOPLE } from '../data';
-import { useStore } from '../store';
+import { useStore, nameOf } from '../store';
 import { Avatar, Btn, Card, Chip, STATUS, cx } from '../ui';
 
 const avg = (h: number[]) => (h.length ? Math.round(h.reduce((a, b) => a + b, 0) / h.length) : 0);
@@ -60,7 +60,7 @@ export default function People() {
                   <td className="py-2">
                     <button className="focus-ring flex items-center gap-2 rounded-lg text-left" onClick={() => setOpen(r.p.id)}>
                       <Avatar id={r.p.id} size="sm" />
-                      <span><span className="font-semibold">{r.p.name}</span><br /><span className="text-xs text-muted">{r.p.title}</span></span>
+                      <span><span className="font-semibold">{nameOf(r.p.id)}</span><br /><span className="text-xs text-muted">{r.p.title}</span></span>
                     </button>
                   </td>
                   <td className="font-bold">{r.eff}%</td>
@@ -74,7 +74,7 @@ export default function People() {
         </div>
       </Card>
 
-      <Modal open={!!person} onClose={() => setOpen(null)} title={person?.name ?? ''} description={person?.title} size="lg">
+      <Modal open={!!person} onClose={() => setOpen(null)} title={person ? nameOf(person.id) : ''} description={person?.title} size="lg">
         {person && (
           <div className="space-y-5">
             <div className="grid grid-cols-3 gap-3 text-center">

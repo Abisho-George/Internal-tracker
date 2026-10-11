@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Modal } from '@/components';
 import { dailyHistory, PEOPLE, type Project } from '../data';
-import { first, useStore } from '../store';
+import { first, useStore, nameOf } from '../store';
 import { Avatar, Bar, Chip } from '../ui';
 
 /** Live line across the working day (9:00 → 18:00) with a "now" marker that keeps moving. */
@@ -53,8 +53,8 @@ export function Spotlights() {
 
   const items = [
     { key: 'project' as const, emoji: '🏆', label: 'Project of the month', name: s.project?.name ?? '—' },
-    { key: 'resource' as const, emoji: '⭐', label: 'Resource of the month', name: s.resource?.name ?? '—' },
-    { key: 'pm' as const, emoji: '👑', label: 'Project manager of the month', name: s.pm?.name ?? '—' },
+    { key: 'resource' as const, emoji: '⭐', label: 'Resource of the month', name: s.resource ? nameOf(s.resource.id) : '—' },
+    { key: 'pm' as const, emoji: '👑', label: 'Project manager of the month', name: s.pm ? nameOf(s.pm.id) : '—' },
   ];
   const person = open === 'resource' ? s.resource : open === 'pm' ? s.pm : undefined;
   const days = person ? dailyHistory(person, 14) : [];
@@ -78,7 +78,7 @@ export function Spotlights() {
     const done = tasks.filter((t) => t.assigneeId === person.id && t.status === 'done').length;
     body = (
       <div className="space-y-4">
-        <div className="flex items-center gap-3"><Avatar id={person.id} size="lg" /><div><p className="text-lg font-bold">{person.name}</p><p className="text-sm text-muted">{person.title}</p></div></div>
+        <div className="flex items-center gap-3"><Avatar id={person.id} size="lg" /><div><p className="text-lg font-bold">{nameOf(person.id)}</p><p className="text-sm text-muted">{person.title}</p></div></div>
         <div className="grid grid-cols-3 gap-2 text-center">
           {[['This week', `${latest(person.history)}%`], ['Best week', `${Math.max(...person.history)}%`], ['Tasks approved', done]].map(([l, v]) => (
             <div key={l as string} className="rounded-xl bg-surface-2 p-3"><p className="text-xl font-bold">{v}</p><p className="text-xs text-muted">{l}</p></div>
@@ -93,7 +93,12 @@ export function Spotlights() {
 
   return (
     <>
-      <section className="grid gap-3 rounded-card bg-gradient-to-r from-[#0B1B4D] via-[#1D3FA0] to-[#2747C9] p-3 shadow-lift sm:grid-cols-3">
+      <section aria-labelledby="spotlight-h" className="rounded-card bg-gradient-to-r from-[#0B1B4D] via-[#1D3FA0] to-[#2747C9] p-4 shadow-lift">
+      <div className="mb-3 flex items-baseline gap-3 px-1 text-white">
+        <h2 id="spotlight-h" className="text-lg font-extrabold tracking-tight">✨ Spotlight</h2>
+        <span className="text-xs text-white/70">This month's stars — click a name for details</span>
+      </div>
+      <div className="grid gap-3 sm:grid-cols-3 ">
         {items.map((it) => (
           <button key={it.key} onClick={() => setOpen(it.key)} className="focus-ring group flex items-center gap-3 rounded-2xl bg-white/10 px-4 py-3 text-left text-white transition hover:bg-white/20">
             <span className="text-3xl transition group-hover:scale-110">{it.emoji}</span>
@@ -103,6 +108,7 @@ export function Spotlights() {
             </span>
           </button>
         ))}
+      </div>
       </section>
       <Modal open={!!open} onClose={() => setOpen(null)} title={items.find((i) => i.key === open)?.label ?? ''} size="md">
         {body}
@@ -125,24 +131,42 @@ export function ProjectBlock({ color, title, meta, children }: { color: string; 
   );
 }
 
+/** Progress against locked targets — one bar per number, with a week/month switch and a filter. */
 export function TargetsTable({ p }: { p: Project }) {
+  const [period, setPeriod] = useState<'week' | 'month'>('week');
+  const [only, setOnly] = useState('all');
+  const cur = period === 'week' ? p.week : p.month;
+  const tgt = period === 'week' ? p.weekTarget : p.monthTarget;
+  const locked = period === 'week' ? p.weekLocked : p.monthLocked;
+  const rows = p.metrics.filter((m) => only === 'all' || m.id === only);
+  const pill = (on: boolean) => `focus-ring rounded-full px-3 py-1 text-xs font-semibold ${on ? 'bg-accent text-accent-on' : 'bg-surface-2 text-muted hover:text-ink'}`;
   return (
-    <div className="space-y-2">
-      {p.metrics.map((m) => (
-        <div key={m.id} className="grid grid-cols-[1fr_auto_auto] items-center gap-x-4 text-sm">
-          <span className="text-muted">{m.label}</span>
-          <span className="w-24 text-right"><b>{(p.week[m.id] ?? 0)}</b>{p.weekLocked ? <span className="text-muted"> / {(p.weekTarget[m.id] ?? 0)}</span> : ''}</span>
-          <span className="w-24 text-right"><b>{(p.month[m.id] ?? 0)}</b>{p.monthLocked ? <span className="text-muted"> / {(p.monthTarget[m.id] ?? 0)}</span> : ''}</span>
-          <div className="col-span-3 grid grid-cols-2 gap-2">
-            <Bar value={(p.week[m.id] ?? 0)} max={p.weekLocked ? (p.weekTarget[m.id] ?? 0) : 0} tone="sky" />
-            <Bar value={(p.month[m.id] ?? 0)} max={p.monthLocked ? (p.monthTarget[m.id] ?? 0) : 0} tone={m.id === 'meetings' ? 'peach' : 'mint'} />
-          </div>
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="flex rounded-full bg-surface-2 p-0.5" role="radiogroup" aria-label="Period">
+          {(['week', 'month'] as const).map((x) => (
+            <button key={x} role="radio" aria-checked={period === x} className={pill(period === x)} onClick={() => setPeriod(x)}>This {x}</button>
+          ))}
         </div>
-      ))}
-      <div className="flex gap-2 pt-1">
-        <Chip tone={p.weekLocked ? 'mint' : 'butter'}>{p.weekLocked ? '🔒 Weekly targets locked' : 'Weekly targets not set yet'}</Chip>
-        <Chip tone={p.monthLocked ? 'mint' : 'butter'}>{p.monthLocked ? '🔒 Monthly targets locked' : 'Monthly targets not set yet'}</Chip>
+        <select aria-label="Filter numbers" className="focus-ring rounded-full border border-line bg-surface px-3 py-1 text-xs" value={only} onChange={(e) => setOnly(e.target.value)}>
+          <option value="all">All numbers</option>
+          {p.metrics.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
+        </select>
+        {!locked && <Chip tone="butter">{period === 'week' ? 'Weekly' : 'Monthly'} targets not set yet</Chip>}
       </div>
+      {rows.map((m) => {
+        const v = cur[m.id] ?? 0;
+        const t = tgt[m.id] ?? 0;
+        return (
+          <div key={m.id} className="text-sm">
+            <div className="mb-1 flex justify-between gap-3">
+              <span className="text-muted">{m.label}</span>
+              <span><b>{v}</b>{locked && t > 0 && <span className="text-muted"> / {t} · {Math.round((v / t) * 100)}%</span>}</span>
+            </div>
+            <Bar value={v} max={locked ? t : 0} tone="sky" />
+          </div>
+        );
+      })}
     </div>
   );
 }

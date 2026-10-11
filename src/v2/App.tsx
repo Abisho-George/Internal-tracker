@@ -1,13 +1,14 @@
 import { Component, useEffect, useRef, useState, type ReactNode } from 'react';
 import { HashRouter, NavLink, Navigate, Route, Routes, useNavigate } from 'react-router-dom';
-import { Bell, ClipboardList, FolderKanban, LayoutDashboard, MessageCircle, Moon, RotateCcw, Settings, Sun, Users } from 'lucide-react';
+import { Bell, ClipboardList, FolderKanban, LayoutDashboard, MessageCircle, Moon, RotateCcw, Settings, Sun, UserCircle, Users } from 'lucide-react';
 import { Toaster, toast } from '@/components';
 import { isLeadRole, PEOPLE, PERSONAS } from './data';
-import { push, useStore } from './store';
+import { first, push, useStore } from './store';
 import { Avatar, Btn, Card, cx, ago } from './ui';
 import { LeadDashboard, TeamDashboard } from './pages/Dashboard';
 import Projects from './pages/Projects';
 import LeadProjects from './pages/LeadProjects';
+import Profile from './pages/Profile';
 import Assign from './pages/Assign';
 import People from './pages/People';
 import Chat from './pages/Chat';
@@ -18,6 +19,7 @@ const DASH: NavItem = { to: '/', label: 'Dashboard', icon: LayoutDashboard };
 const PROJECTS: NavItem = { to: '/projects', label: 'Projects', icon: FolderKanban };
 const ASSIGN: NavItem = { to: '/assign', label: 'Assign', icon: ClipboardList };
 const PEOPLE_NAV: NavItem = { to: '/people', label: 'People', icon: Users };
+const PROFILE: NavItem = { to: '/profile', label: 'Profile', icon: UserCircle };
 
 function Activity() {
   const { me, notices, readAll, readNotice } = useStore();
@@ -74,7 +76,10 @@ function Shell() {
   const { me, notices, projects, setMe, reset } = useStore();
   const person = PEOPLE.find((p) => p.id === me)!;
   const unread = notices.filter((n) => n.to === me && !n.read).length;
-  const [dark, setDark] = useState(() => { try { return localStorage.getItem('ls-theme') === 'dark'; } catch { return false; } });
+  // Theme and accent are saved per person on their profile.
+  const prof = useStore((st) => st.profiles[me]);
+  const dark = !!prof?.dark;
+  const accent = prof?.accent ?? 'brand';
   const [chatOpen, setChatOpen] = useState(false);
   const [setupOpen, setSetupOpen] = useState(false);
   const chatUnread = notices.filter((n) => n.to === me && !n.read && n.text.includes('anonymous')).length;
@@ -82,13 +87,13 @@ function Shell() {
   useLiveNotices();
   useEffect(() => {
     document.documentElement.dataset.theme = dark ? 'dark' : 'light';
-    try { localStorage.setItem('ls-theme', dark ? 'dark' : 'light'); } catch { /* storage unavailable */ }
-  }, [dark]);
+    document.documentElement.dataset.accent = accent;
+  }, [dark, accent]);
 
   const lead = isLeadRole(person.role);
   // Resources and PMs share one view; Assign appears once they own an approved project.
   const ownsProject = projects.some((p) => p.pmId === me && p.status === 'active');
-  const navItems: NavItem[] = lead ? [DASH, PROJECTS, ASSIGN, PEOPLE_NAV] : ownsProject ? [DASH, PROJECTS, ASSIGN] : [DASH, PROJECTS];
+  const navItems: NavItem[] = [...(lead ? [DASH, PROJECTS, ASSIGN, PEOPLE_NAV] : ownsProject ? [DASH, PROJECTS, ASSIGN] : [DASH, PROJECTS]), PROFILE];
   const rail = [
     { to: '/activity', label: 'Activity', icon: Bell, badge: unread },
     ...navItems.map((n) => ({ ...n, badge: 0 })),
@@ -112,7 +117,7 @@ function Shell() {
         ))}
         <div className="mt-auto flex flex-col items-center gap-2">
           {lead && <button aria-label="Onboard a new project" title="Onboard a new project" className="focus-ring rounded-xl p-2 text-muted hover:bg-surface-2" onClick={() => setSetupOpen(true)}><Settings size={18} /></button>}
-          <button aria-label="Toggle dark mode" className="focus-ring rounded-xl p-2 text-muted hover:bg-surface-2" onClick={() => setDark((d) => !d)}>{dark ? <Sun size={18} /> : <Moon size={18} />}</button>
+          <button aria-label="Toggle dark mode" className="focus-ring rounded-xl p-2 text-muted hover:bg-surface-2" onClick={() => useStore.getState().setProfile(me, { dark: !dark })}>{dark ? <Sun size={18} /> : <Moon size={18} />}</button>
           <button aria-label="Reset demo data" title="Reset demo data" className="focus-ring rounded-xl p-2 text-muted hover:bg-surface-2" onClick={() => { reset(); toast({ title: 'Demo data reset', tone: 'info' }); }}><RotateCcw size={18} /></button>
         </div>
       </nav>
@@ -130,7 +135,7 @@ function Shell() {
                   onClick={() => { setMe(id); nav('/'); }}
                   className={cx('focus-ring flex items-center gap-1.5 rounded-full py-1 pl-1 pr-3 text-xs font-semibold', id === me ? 'bg-surface shadow-soft' : 'text-muted')}
                 >
-                  <Avatar id={id} size="sm" /> {p.name.split(' ')[0]} <span className="hidden font-normal sm:inline">· {p.title}</span>
+                  <Avatar id={id} size="sm" /> {first(p.id)} <span className="hidden font-normal sm:inline">· {p.title}</span>
                 </button>
               );
             })}
@@ -141,6 +146,7 @@ function Shell() {
             <Route path="/" element={lead ? <LeadDashboard /> : <TeamDashboard />} />
             <Route path="/projects" element={lead ? <LeadProjects /> : <Projects />} />
             <Route path="/activity" element={<Activity />} />
+            <Route path="/profile" element={<Profile />} />
             {(lead || ownsProject) && <Route path="/assign" element={<Assign key={me} />} />}
             {lead && <Route path="/people" element={<People />} />}
             <Route path="*" element={<Navigate to="/" replace />} />
