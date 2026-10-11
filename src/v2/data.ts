@@ -221,6 +221,8 @@ export interface Task {
   reminders: number;
   /** Everything a reviewer did on this task (powers the reviewed-tasks log). */
   reviews: { by: string; verdict: 'approved' | 'feedback'; at: string }[];
+  /** Sample history from before the demo — shown in calendars and logs, not re-counted in live project numbers. */
+  historic?: boolean;
 }
 
 export function targetFor(typeId: string, qty: number, variant?: string): number {
@@ -253,7 +255,58 @@ function t(id: string, typeId: string, qty: number, assigneeId: string, projectI
   };
 }
 
+/** Working days before today, newest first (yyyy-MM-dd). */
+export function pastWorkingDays(n: number): string[] {
+  const out: string[] = [];
+  for (let i = 1; out.length < n && i < n * 2 + 7; i++) {
+    const d = new Date();
+    d.setDate(d.getDate() - i);
+    if (d.getDay() !== 0 && d.getDay() !== 6) out.push(iso(d));
+  }
+  return out;
+}
+
+/** Who works on what (for generated history). */
+export const WORK: Record<string, string[]> = {
+  udhaya: ['northwind', 'helios', 'bd'], bharath: ['northwind'], sachi: ['helios'], bheeshma: ['northwind', 'bd'],
+  prajwal: ['northwind', 'helios'], abisho: ['bd'], alok: ['helios'],
+};
+export const PM_OF: Record<string, string> = { northwind: 'bheeshma', helios: 'alok', bd: 'abisho' };
+
+/** A few finished, reviewed tasks for every working day of the last four weeks. */
+function historyTasks(): Task[] {
+  let seed = 7;
+  const rnd = () => ((seed = (seed * 9301 + 49297) % 233280) / 233280);
+  const kinds: [string, number, string?][] = [['l1', 30, 'Personalised'], ['l1', 45, 'Semi-personalised'], ['l2', 40], ['followup', 50], ['prospect', 30], ['model', 10], ['email', 30], ['whatsapp', 60], ['deck', 1]];
+  const out: Task[] = [];
+  pastWorkingDays(20).forEach((date, di) => {
+    Object.entries(WORK).forEach(([who, projects]) => {
+      const n = 3 + Math.floor(rnd() * 3);
+      for (let k = 0; k < n; k++) {
+        const pid = projects[Math.floor(rnd() * projects.length)];
+        const [typeId, qty, variant] = kinds[Math.floor(rnd() * kinds.length)];
+        const target = targetFor(typeId, qty, variant);
+        const pm = PM_OF[pid];
+        const assigner = rnd() < 0.12 ? 'komala' : pm === who ? 'komala' : pm;
+        const reviewer = pm === who ? 'komala' : pm;
+        const minutes = Math.max(5, Math.round(target * (0.8 + rnd() * 0.45)));
+        const at = new Date(date + 'T17:30:00').toISOString();
+        out.push({
+          ...t(`h${di}-${who}-${k}`, typeId, qty, who, pid, assigner, 'done', { variant, doneQty: qty, minutes, reviewerId: reviewer }),
+          date, createdAt: new Date(date + 'T10:00:00').toISOString(), priority: assigner === 'komala',
+          reviews: [{ by: reviewer, verdict: 'approved', at }], historic: true,
+        });
+      }
+    });
+  });
+  return out;
+}
+
 export function seedTasks(): Task[] {
+  return [...liveTasks(), ...historyTasks()];
+}
+
+function liveTasks(): Task[] {
   const hAgo = (h: number) => new Date(Date.now() - h * 3600_000).toISOString();
   return [
     t('t1', 'model', 10, 'udhaya', 'northwind', 'bheeshma', 'done', { doneQty: 10, minutes: 28, reviewerId: 'bheeshma', reviews: [{ by: 'bheeshma', verdict: 'approved', at: hAgo(3) }] }),

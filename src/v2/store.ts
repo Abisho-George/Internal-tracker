@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import {
-  day, isLeadRole, PEOPLE, seedProjects, seedTasks, targetFor, taskTitle, TASK_TYPES, ZERO, METRICS,
+  day, isLeadRole, pastWorkingDays, WORK, PEOPLE, seedProjects, seedTasks, targetFor, taskTitle, TASK_TYPES, ZERO, METRICS,
   type Counts, type Metric, type Project, type Task,
 } from './data';
 
@@ -51,8 +51,15 @@ export interface DailyUpdate {
   eodNote: string;
   eodActuals: ProjectNumbers;
   eodAt?: string;
+  /** Free-form extras for anything that came up: "label: qty". */
+  sodCustom?: CustomRow[];
+  eodCustom?: CustomRow[];
 }
-export const emptyDaily = (): DailyUpdate => ({ plan: [], sodNote: '', sodTargets: {}, eodNote: '', eodActuals: {} });
+export interface CustomRow { id: string; label: string; qty: number }
+export const emptyDaily = (): DailyUpdate => ({ plan: [], sodNote: '', sodTargets: {}, eodNote: '', eodActuals: {}, sodCustom: [], eodCustom: [] });
+
+/** Lunch is fixed for everyone, every day. */
+export const LUNCH = { start: '13:00', end: '14:00' };
 
 interface Actions {
   setMe: (id: string) => void;
@@ -268,6 +275,7 @@ export const useStore = create<Data & Actions>()(
               if (b.custom ? !b.custom.title.trim() : !b.projectId) throw new Error(b.custom ? 'Give the custom block a title.' : 'Pick a project for every time block.');
               if (b.end <= b.start) throw new Error('A time block must end after it starts.');
             }
+            for (const b of patchD.plan) if (b.start < LUNCH.end && b.end > LUNCH.start) throw new Error('1pm – 2pm is lunch 🍽 — move that block around it.');
             const sorted = [...patchD.plan].sort((a, b) => a.start.localeCompare(b.start));
             for (let i = 1; i < sorted.length; i++) if (sorted[i].start < sorted[i - 1].end) throw new Error('Two time blocks overlap — adjust the times.');
           }
@@ -364,7 +372,7 @@ export const useStore = create<Data & Actions>()(
     },
     {
       name: 'ls-tracker-v2',
-      version: 7,
+      version: 8,
       // Old or unreadable saved data falls back to a fresh demo instead of crashing.
       migrate: () => seed() as never,
       merge: (persisted, current) => {
@@ -430,7 +438,7 @@ export function projectCounts(p: Project, tasks: Task[], daily: Record<string, D
   const [from, to] = periodRange(period);
   const auto: Record<string, number> = {};
   const add = (k: string, v: number) => { auto[k] = (auto[k] ?? 0) + v; };
-  tasks.filter((t) => t.projectId === p.id && t.date >= from && t.date < to && (t.status === 'done' || t.status === 'in_review') && t.doneQty)
+  tasks.filter((t) => !t.historic && t.projectId === p.id && t.date >= from && t.date < to && (t.status === 'done' || t.status === 'in_review') && t.doneQty)
     .forEach((t) => (TASK_FEEDS[t.typeId] ?? []).forEach((k) => add(k, t.doneQty!)));
   Object.entries(daily).forEach(([key, d]) => {
     const date = key.split('|')[1];
@@ -450,36 +458,83 @@ function weekStartISO(): string {
 
 /** A starter day plan built from the hours each project gets, beginning at 10:00. */
 export function defaultPlan(projects: Project[], personId: string): DayBlock[] {
+  // Fill 10:00–13:00 then 14:00–19:00 with each project's hours, splitting around lunch.
+  const out: DayBlock[] = [];
+  const slots = [[10, 13], [14, 19]];
+  let si = 0;
   let h = 10;
-  return projects
-    .filter((p) => p.status === 'active' && (p.hours[personId] ?? 0) > 0)
-    .map((p) => {
-      const start = h;
-      h = Math.min(19, h + p.hours[personId]);
-      return { id: uid(), start: `${String(start).padStart(2, '0')}:00`, end: `${String(h).padStart(2, '0')}:00`, projectId: p.id, taskIds: [] };
-    })
-    .filter((b) => b.end > b.start);
+  const hh = (n: number) => `${String(n).padStart(2, '0')}:00`;
+  for (const p of projects.filter((x) => x.status === 'active' && (x.hours[personId] ?? 0) > 0)) {
+    let left = p.hours[personId];
+    while (left > 0 && si < slots.length) {
+      const end = Math.min(slots[si][1], h + left);
+      out.push({ id: uid(), start: hh(h), end: hh(end), projectId: p.id, taskIds: [] });
+      left -= end - h;
+      h = end;
+      if (h >= slots[si][1]) { si++; if (si < slots.length) h = slots[si][0]; }
+    }
+  }
+  return out;
+}
+
+
+/** Morning targets + evening reports for the last two weeks, for everyone on the team. */
+function historyDaily(projects: Project[]): Record<string, DailyUpdate> {
+  const NOTES_AM = ['Clear the follow-ups first, then fresh L1s.', 'Prospect list for the new ICP, then messages.', 'Calls in the morning, emails after lunch.', 'Finish yesterday\'s carry-over, then the new batch.', 'Deck review first, outreach after.'];
+  const NOTES_PM = ['Good day — two warm replies.', 'Hit the message target, calls were quiet.', 'CRM was slow but caught up by 6.', 'One meeting interest from a VP Sales.', 'Carry-over: 10 follow-ups for tomorrow.'];
+  let seed = 11;
+  const rnd = () => ((seed = (seed * 9301 + 49297) % 233280) / 233280);
+  const out: Record<string, DailyUpdate> = {};
+  pastWorkingDays(10).forEach((date) => {
+    Object.entries(WORK).forEach(([who, pids]) => {
+      if (rnd() < 0.08) return; // the odd day someone forgot
+      const plan = defaultPlan(projects, who);
+      if (rnd() < 0.3 && plan.length) {
+        const last = plan[plan.length - 1];
+        if (last.end > '17:00') {
+          last.end = '17:00';
+          plan.push({ id: uid(), start: '17:00', end: '19:00', projectId: '', taskIds: [], custom: { title: ['Urgent client call prep', 'Ad-hoc list cleanup', 'Proposal revision'][Math.floor(rnd() * 3)], priority: true, targetQty: 5, unit: 'items', achieved: 4 + Math.floor(rnd() * 2) } });
+        }
+      }
+      const sodTargets: ProjectNumbers = {};
+      const eodActuals: ProjectNumbers = {};
+      pids.forEach((pid) => {
+        const resp = 2 + Math.floor(rnd() * 4);
+        sodTargets[pid] = { responses: resp, interest: 1 };
+        eodActuals[pid] = { responses: Math.max(0, resp + Math.floor(rnd() * 4) - 2), interest: Math.floor(rnd() * 3) };
+      });
+      out[`${who}|${date}`] = {
+        ...emptyDaily(), plan, sodTargets, eodActuals,
+        sodNote: NOTES_AM[Math.floor(rnd() * NOTES_AM.length)], eodNote: NOTES_PM[Math.floor(rnd() * NOTES_PM.length)],
+        sodAt: new Date(`${date}T10:${String(Math.floor(rnd() * 20)).padStart(2, '0')}:00`).toISOString(),
+        eodAt: rnd() < 0.9 ? new Date(`${date}T18:${String(30 + Math.floor(rnd() * 29)).padStart(2, '0')}:00`).toISOString() : undefined,
+      };
+    });
+  });
+  return out;
 }
 
 function seedDaily(): Record<string, DailyUpdate> {
-  // Udhaya already planned her morning today and wrote yesterday's end-of-day.
   const y = day(-1);
   const at = (h: number, m: number) => new Date(new Date().setHours(h, m, 0, 0)).toISOString();
+  const history = historyDaily(seedProjects());
   return {
+    ...history,
     [`udhaya|${day(0)}`]: {
       ...emptyDaily(),
       plan: [
-        { id: 'b1', start: '10:00', end: '14:00', projectId: 'northwind', taskIds: ['t5', 't3', 't4'] },
+        { id: 'b1', start: '10:00', end: '13:00', projectId: 'northwind', taskIds: [] },
         { id: 'b2', start: '14:00', end: '16:00', projectId: 'helios', taskIds: ['t13', 't14'] },
         { id: 'b3', start: '16:00', end: '18:00', projectId: 'bd', taskIds: ['t15'] },
       ],
       sodNote: 'Finish the QBR deck first, then personalised L1s.',
+      sodCustom: [{ id: 'sc1', label: 'Case-study one-pager for Northwind', qty: 1 }],
       sodTargets: { northwind: { messages: 60 } },
       sodAt: new Date(new Date().setHours(10, 5, 0, 0)).toISOString(),
     },
     [`bharath|${day(0)}`]: {
       ...emptyDaily(),
-      plan: [{ id: 'b4', start: '10:00', end: '19:00', projectId: 'northwind', taskIds: [] }],
+      plan: [{ id: 'b4', start: '10:00', end: '13:00', projectId: 'northwind', taskIds: [] }, { id: 'b4b', start: '14:00', end: '19:00', projectId: 'northwind', taskIds: [] }],
       sodNote: 'Telecalling block in the morning, emails after lunch.',
       sodTargets: { northwind: { calls: 25, responses: 4 } },
       sodAt: at(10, 12),
@@ -491,7 +546,8 @@ function seedDaily(): Record<string, DailyUpdate> {
       ...emptyDaily(),
       plan: [
         { id: 'b5', start: '10:00', end: '12:00', projectId: 'helios', taskIds: [], custom: { title: 'Helios pitch deck fixes for CFO call', priority: true, targetQty: 8, unit: 'slides', projectId: 'helios' } },
-        { id: 'b6', start: '12:00', end: '19:00', projectId: 'helios', taskIds: [] },
+        { id: 'b6', start: '12:00', end: '13:00', projectId: 'helios', taskIds: [] },
+        { id: 'b6b', start: '14:00', end: '19:00', projectId: 'helios', taskIds: [] },
       ],
       sodNote: 'Deck fixes first (urgent), then L2 follow-ups.',
       sodTargets: { helios: { messages: 80, responses: 6 } },
@@ -507,6 +563,7 @@ function seedDaily(): Record<string, DailyUpdate> {
       eodAt: at(18, 55),
     },
     [`udhaya|${y}`]: {
+      ...(history[`udhaya|${y}`] ?? {}),
       ...emptyDaily(),
       sodNote: 'Follow-ups and WhatsApp batch.',
       eodNote: 'Follow-ups 20/25 done, rest carried to today. Two positive replies.',

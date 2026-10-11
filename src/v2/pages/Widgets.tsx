@@ -26,6 +26,9 @@ export function DayTracker({ blocks, loggedMinutes }: { blocks: DayBlock[]; logg
   return (
     <div className="pt-6">
       <div className="relative h-10 overflow-hidden rounded-xl bg-surface-2">
+        <div className="absolute inset-y-0 flex items-center justify-center border-x-2 border-surface bg-grey text-[11px] font-semibold text-grey-ink" style={{ left: `${((13 * 60 - DAY_START) / span) * 100}%`, width: `${(60 / span) * 100}%`, backgroundImage: 'repeating-linear-gradient(135deg, rgb(0 0 0 / 0.04) 0 6px, transparent 6px 12px)' }} title="Lunch 1–2pm">
+          🍽 Lunch
+        </div>
         {blocks.map((b) => {
           const p = projects.find((x) => x.id === b.projectId);
           const l = ((toMin(b.start) - DAY_START) / span) * 100;
@@ -36,7 +39,7 @@ export function DayTracker({ blocks, loggedMinutes }: { blocks: DayBlock[]; logg
             </div>
           );
         })}
-        {!blocks.length && <p className="flex h-full items-center justify-center text-xs text-muted">No day plan yet — set it in Daily update</p>}
+        {!blocks.length && <p className="absolute inset-y-0 left-0 flex w-1/3 items-center justify-center text-xs text-muted">No day plan yet</p>}
       </div>
       <div className="relative -mt-12 h-12">
         <div className="absolute top-0 h-12 w-0.5 -translate-x-1/2 bg-coral-strong" style={{ left: `${pct}%` }}>

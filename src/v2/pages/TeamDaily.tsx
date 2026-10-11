@@ -3,10 +3,16 @@ import { CalendarDays, ChevronLeft, ChevronRight, Moon, Sunrise } from 'lucide-r
 import { day, isLeadRole, PEOPLE } from '../data';
 import { emptyDaily, nameOf, useStore } from '../store';
 import { Avatar, Card, Chip, cx } from '../ui';
-import { CustomBlocksView, NumbersView } from './DailyViews';
+import { CustomBlocksView, CustomRowsView, NumbersView } from './DailyViews';
 import { colorOf } from './Widgets';
 
-const shift = (d: string, n: number) => { const x = new Date(d + 'T00:00'); x.setDate(x.getDate() + n); return x.toISOString().slice(0, 10); };
+/** Move n working days (weekends skipped) and never past today. */
+const shift = (d: string, n: number) => {
+  const x = new Date(d + 'T00:00');
+  do x.setDate(x.getDate() + Math.sign(n)); while (x.getDay() === 0 || x.getDay() === 6);
+  const out = `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}-${String(x.getDate()).padStart(2, '0')}`;
+  return out > day(0) ? day(0) : out;
+};
 const time = (iso?: string) => (iso ? new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '');
 type Filter = 'all' | 'noTargets' | 'noEod';
 
@@ -78,6 +84,7 @@ export default function TeamDaily() {
                   <div className="space-y-2">
                     {d.sodNote && <p className="text-sm">“{d.sodNote}”</p>}
                     <NumbersView numbers={d.sodTargets} empty="No number targets." />
+                    <CustomRowsView rows={d.sodCustom} />
                     <CustomBlocksView plan={d.plan} />
                   </div>
                 ) : <p className="text-sm text-muted">Not set yet.</p>}
@@ -88,6 +95,8 @@ export default function TeamDaily() {
                   <div className="space-y-2">
                     {d.eodNote && <p className="text-sm">“{d.eodNote}”</p>}
                     <NumbersView numbers={d.eodActuals} targets={d.sodTargets} empty="No numbers reported." />
+                    <CustomRowsView rows={d.eodCustom} targets={d.sodCustom} />
+                    <CustomBlocksView plan={d.plan.filter((b) => b.custom?.achieved != null)} />
                   </div>
                 ) : <p className="text-sm text-muted">{isToday ? 'Not sent yet.' : 'Not sent.'}</p>}
               </div>

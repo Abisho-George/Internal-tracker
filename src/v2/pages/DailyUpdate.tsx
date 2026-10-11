@@ -2,16 +2,23 @@ import { useEffect, useMemo, useState } from 'react';
 import { CalendarDays, ChevronLeft, ChevronRight, Lock, Moon, Pencil, Plus, Star, Sunrise, Trash2, Wand2 } from 'lucide-react';
 import { toast } from '@/components';
 import { day } from '../data';
-import { defaultPlan, emptyDaily, first, useStore, type DayBlock, type ProjectNumbers } from '../store';
+import { defaultPlan, emptyDaily, first, LUNCH, useStore, type CustomRow, type DayBlock, type ProjectNumbers } from '../store';
 import { Btn, Card, Chip, H2, cx, fmtMin, input, safe } from '../ui';
 import { colorOf, DayTracker } from './Widgets';
-import { CustomBlocksView, NumbersView } from './DailyViews';
+import { CustomBlocksView, CustomRows, CustomRowsView, NumbersView } from './DailyViews';
 
 const TIMES = Array.from({ length: 19 }, (_, i) => `${String(10 + Math.floor(i / 2)).padStart(2, '0')}:${i % 2 ? '30' : '00'}`);
 /** Numbers that are already counted from submitted tasks — don't ask for them again at end of day. */
 const AUTO = new Set(['messages', 'l2', 'decks']);
-const shift = (d: string, n: number) => { const x = new Date(d + 'T00:00'); x.setDate(x.getDate() + n); return x.toISOString().slice(0, 10); };
+/** Move n working days (weekends skipped) and never past today. */
+const shift = (d: string, n: number) => {
+  const x = new Date(d + 'T00:00');
+  do x.setDate(x.getDate() + Math.sign(n)); while (x.getDay() === 0 || x.getDay() === 6);
+  const out = `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}-${String(x.getDate()).padStart(2, '0')}`;
+  return out > day(0) ? day(0) : out;
+};
 let bid = 0;
+const LUNCH_ROW: DayBlock = { id: 'lunch', start: LUNCH.start, end: LUNCH.end, projectId: '', taskIds: [] };
 const field = 'focus-ring rounded-xl border border-line bg-surface px-2 py-1 text-sm';
 
 function NumbersGrid({ value, onChange, skipAuto }: { value: ProjectNumbers; onChange: (v: ProjectNumbers) => void; skipAuto?: boolean }) {
@@ -46,6 +53,8 @@ export default function DailyUpdate() {
   const [sodTargets, setSodTargets] = useState<ProjectNumbers>(saved.sodTargets);
   const [eodNote, setEodNote] = useState(saved.eodNote);
   const [eodActuals, setEodActuals] = useState<ProjectNumbers>(saved.eodActuals);
+  const [sodCustom, setSodCustom] = useState<CustomRow[]>(saved.sodCustom ?? []);
+  const [eodCustom, setEodCustom] = useState<CustomRow[]>(saved.eodCustom ?? []);
   const [editSod, setEditSod] = useState(false);
   const [editEod, setEditEod] = useState(false);
   const sodLocked = !!saved.sodAt && !editSod;
@@ -54,7 +63,7 @@ export default function DailyUpdate() {
   useEffect(() => {
     const d = useStore.getState().daily[`${me}|${date}`] ?? emptyDaily();
     setEditSod(false); setEditEod(false);
-    setPlan(d.plan); setSodNote(d.sodNote); setSodTargets(d.sodTargets); setEodNote(d.eodNote); setEodActuals(d.eodActuals);
+    setPlan(d.plan); setSodCustom(d.sodCustom ?? []); setEodCustom(d.eodCustom ?? []); setSodNote(d.sodNote); setSodTargets(d.sodTargets); setEodNote(d.eodNote); setEodActuals(d.eodActuals);
   }, [me, date]);
 
   const myProjects = projects.filter((p) => p.status === 'active' && (p.pmId === me || p.teamIds.includes(me)));
@@ -64,8 +73,9 @@ export default function DailyUpdate() {
   const upd = (id: string, p: Partial<DayBlock>) => setPlan((x) => x.map((b) => (b.id === id ? { ...b, ...p } : b)));
   const updC = (id: string, c: Partial<NonNullable<DayBlock['custom']>>) => setPlan((x) => x.map((b) => (b.id === id && b.custom ? { ...b, custom: { ...b.custom, ...c } } : b)));
   const addBlock = () => {
-    const last = [...plan].sort((a, b) => a.end.localeCompare(b.end)).at(-1)?.end ?? '10:00';
-    const endIdx = Math.min(TIMES.length - 1, TIMES.indexOf(last) + 4);
+    let last = [...plan].sort((a, b) => a.end.localeCompare(b.end)).at(-1)?.end ?? '10:00';
+    if (last >= LUNCH.start && last < LUNCH.end) last = LUNCH.end;
+    const endIdx = Math.min(TIMES.length - 1, last < LUNCH.start ? TIMES.indexOf(LUNCH.start) : TIMES.indexOf(last) + 4);
     if (last >= '19:00') return toast({ title: 'Your day is already planned up to 7pm', tone: 'info' });
     setPlan((x) => [...x, { id: `nb${++bid}`, start: last, end: TIMES[endIdx], projectId: myProjects[0]?.id ?? '', taskIds: [] }]);
   };
@@ -85,11 +95,16 @@ export default function DailyUpdate() {
       </div>
 
       <Card>
-        <H2 right={<span className="text-xs text-muted">{fmtMin(plannedMin)} of 9h planned</span>}>Plan your day</H2>
+        <H2 right={<span className="text-xs text-muted">{fmtMin(plannedMin)} of 8h planned · lunch 1–2pm</span>}>Plan your day</H2>
         <DayTracker blocks={plan} loggedMinutes={openTasks.filter((t) => t.date === date && t.minutes).reduce((s, t) => s + (t.minutes ?? 0), 0)} />
         <div className="mt-5 space-y-3">
           {plan.length === 0 && <p className="text-sm text-muted">Split your day into time blocks. Pick a project for each, or “★ Custom / priority” for anything urgent.</p>}
-          {[...plan].sort((a, b) => a.start.localeCompare(b.start)).map((b) => {
+          {[...plan, LUNCH_ROW].sort((a, b) => a.start.localeCompare(b.start)).map((b) => {
+            if (b.id === 'lunch') return (
+              <div key="lunch" className="flex items-center gap-3 rounded-xl border border-dashed border-line bg-surface-2 px-3 py-2 text-sm text-muted">
+                <span className="w-[13.5rem] font-semibold">13:00 → 14:00</span> 🍽 Lunch break — every day
+              </div>
+            );
             const c = b.custom;
             const color = c ? (c.priority ? '#DC2626' : '#64748B') : colorOf(projects, b.projectId);
             return (
@@ -138,6 +153,7 @@ export default function DailyUpdate() {
               <p className="rounded-xl bg-surface-2 p-3 text-sm">{saved.sodNote || <span className="text-muted">No note.</span>}</p>
               <p className="text-sm font-semibold">Today's targets</p>
               <NumbersView numbers={saved.sodTargets} empty="No number targets set." />
+              <CustomRowsView rows={saved.sodCustom} />
               <CustomBlocksView plan={saved.plan} />
               <Btn tone="ghost" className="border border-line" onClick={() => setEditSod(true)}><Pencil size={13} /> Edit targets</Btn>
             </div>
@@ -148,8 +164,9 @@ export default function DailyUpdate() {
               </label>
               <p className="mb-2 mt-4 text-sm font-semibold">Today's targets</p>
               <NumbersGrid value={sodTargets} onChange={setSodTargets} />
+              <CustomRows rows={sodCustom} onChange={setSodCustom} hint="Anything else you're aiming for today" />
               <div className="mt-4 flex gap-2">
-                <Btn onClick={() => safe(() => { saveDaily(me, date, { sodNote, sodTargets, sodAt: new Date().toISOString() }); setEditSod(false); toast({ title: "Today's targets locked 🎯", tone: 'success' }); })}><Lock size={13} /> {saved.sodAt ? 'Save & lock' : "Set & lock today's targets"}</Btn>
+                <Btn onClick={() => safe(() => { saveDaily(me, date, { sodNote, sodTargets, sodCustom: sodCustom.filter((r) => r.label.trim()), sodAt: new Date().toISOString() }); setEditSod(false); toast({ title: "Today's targets locked 🎯", tone: 'success' }); })}><Lock size={13} /> {saved.sodAt ? 'Save & lock' : "Set & lock today's targets"}</Btn>
                 {saved.sodAt && <Btn tone="ghost" className="border border-line" onClick={() => { setSodNote(saved.sodNote); setSodTargets(saved.sodTargets); setEditSod(false); }}>Cancel</Btn>}
               </div>
             </>
@@ -165,6 +182,7 @@ export default function DailyUpdate() {
               <p className="rounded-xl bg-surface-2 p-3 text-sm">{saved.eodNote || <span className="text-muted">No note.</span>}</p>
               <p className="text-sm font-semibold">Achieved vs this morning's targets</p>
               <NumbersView numbers={saved.eodActuals} targets={saved.sodTargets} empty="No numbers reported." />
+              <CustomRowsView rows={saved.eodCustom} targets={saved.sodCustom} />
               <CustomBlocksView plan={saved.plan} />
               <Btn tone="ghost" className="border border-line" onClick={() => setEditEod(true)}><Pencil size={13} /> Edit update</Btn>
             </div>
@@ -188,8 +206,9 @@ export default function DailyUpdate() {
                 </div>
               )}
               <NumbersGrid value={eodActuals} onChange={setEodActuals} skipAuto />
+              <CustomRows rows={eodCustom} onChange={setEodCustom} hint="Anything else you did that isn't listed above" suggest={sodCustom} />
               <div className="mt-4 flex gap-2">
-                <Btn onClick={() => safe(() => { saveDaily(me, date, { plan, eodNote, eodActuals, eodAt: new Date().toISOString() }); setEditEod(false); toast({ title: `End of day sent & locked — nice work, ${first(me)} 🌙`, tone: 'success' }); })}><Lock size={13} /> {saved.eodAt ? 'Save & lock' : 'Send & lock end of day'}</Btn>
+                <Btn onClick={() => safe(() => { saveDaily(me, date, { plan, eodNote, eodActuals, eodCustom: eodCustom.filter((r) => r.label.trim()), eodAt: new Date().toISOString() }); setEditEod(false); toast({ title: `End of day sent & locked — nice work, ${first(me)} 🌙`, tone: 'success' }); })}><Lock size={13} /> {saved.eodAt ? 'Save & lock' : 'Send & lock end of day'}</Btn>
                 {saved.eodAt && <Btn tone="ghost" className="border border-line" onClick={() => { setEodNote(saved.eodNote); setEodActuals(saved.eodActuals); setEditEod(false); }}>Cancel</Btn>}
               </div>
             </>
