@@ -39,7 +39,9 @@ export interface AssignInput {
 }
 
 /** A person's day: how it's split, what they aim for in the morning and what they report in the evening. */
-export interface DayBlock { id: string; start: string; end: string; projectId: string; taskIds: string[] }
+/** A custom block covers something outside the task list, e.g. an urgent priority that came up. */
+export interface CustomBlock { title: string; priority: boolean; targetQty: number; unit: string; achieved?: number; projectId?: string }
+export interface DayBlock { id: string; start: string; end: string; projectId: string; taskIds: string[]; custom?: CustomBlock }
 export type ProjectNumbers = Record<string, Record<string, number>>; // projectId -> metricId -> value
 export interface DailyUpdate {
   plan: DayBlock[];
@@ -263,7 +265,7 @@ export const useStore = create<Data & Actions>()(
           const key = `${pid}|${date}`;
           if (patchD.plan) {
             for (const b of patchD.plan) {
-              if (!b.projectId) throw new Error('Pick a project for every time block.');
+              if (b.custom ? !b.custom.title.trim() : !b.projectId) throw new Error(b.custom ? 'Give the custom block a title.' : 'Pick a project for every time block.');
               if (b.end <= b.start) throw new Error('A time block must end after it starts.');
             }
             const sorted = [...patchD.plan].sort((a, b) => a.start.localeCompare(b.start));
