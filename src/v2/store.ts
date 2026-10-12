@@ -1,9 +1,11 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import {
-  day, isLeadRole, pastWorkingDays, WORK, PEOPLE, seedProjects, seedTasks, targetFor, taskTitle, TASK_TYPES, ZERO, METRICS,
-  type Counts, type Metric, type Project, type Task,
+  addDays, canManage, day, findCustomStandard, isLeadRole, isWorkingDay, nextWorkingDay, pastWorkingDays, PEOPLE, previousWorkingDay, rollPeriods, seedProjects, seedTasks, standardFor, targetFor,
+  taskTitle, TASK_TYPES, toMinutes, weekStart, weekStartOf, WORK, ZERO, METRICS,
+  type Counts, type CustomStandard, type Metric, type Project, type Task, type TaskEvent,
 } from './data';
+import { daySnapshot, weekSnapshot } from './analytics';
 
 export interface Notice { id: string; to: string; text: string; at: string; read: boolean; kind?: 'chat' | 'task' | 'project' }
 /** Anonymous chat: conversations know members; messages carry only an alias. */
@@ -23,11 +25,20 @@ export interface CustomTheme {
 export const DEFAULT_CUSTOM: CustomTheme = { base: 'light', accent: '#7C3AED', background: 'confetti', font: 'fredoka', cards: 'bubbly', nowEmoji: '🏃', blocks: 'candy' };
 export interface Profile {
   name?: string; emoji?: string; photo?: string; accent?: string; dark?: boolean;
+  /** mascot: undefined means ON (the mascot is shown by default). */
   theme?: ThemeId; custom?: CustomTheme; mascot?: boolean; fun?: boolean;
 }
 
+/** Frozen target vs actual numbers, keyed by row key (task type, L1 variant, custom task, or `row:<label>` free-form rows). */
+export interface SnapshotRow { label: string; unit: string; target: number; actual: number }
+export interface Snapshot { byType: Record<string, SnapshotRow>; at: string }
+
 /** Weekly targets & end-of-week update, keyed by `${personId}|${weekStart}`. */
-export interface WeeklyUpdate { targetsNote: string; targetsCustom: CustomRow[]; targetsAt?: string; eowNote: string; eowCustom: CustomRow[]; eowAt?: string }
+export interface WeeklyUpdate {
+  targetsNote: string; targetsCustom: CustomRow[]; targetsAt?: string; eowNote: string; eowCustom: CustomRow[]; eowAt?: string;
+  /** Frozen automatically when the end-of-week update is sent. */
+  eowSnapshot?: Snapshot;
+}
 export const emptyWeekly = (): WeeklyUpdate => ({ targetsNote: '', targetsCustom: [], eowNote: '', eowCustom: [] });
 
 interface Data {
@@ -43,12 +54,17 @@ interface Data {
   daily: Record<string, DailyUpdate>;
   weekly: Record<string, WeeklyUpdate>;
 }
+/** The persisted app data (without actions). Analytics functions take slices of it. */
+export type AppData = Data;
 
 export interface AssignInput {
-  typeId: string; // task type id or 'custom'
+  /** Task type id, 'custom', or a project custom standard id. */
+  typeId: string;
   variant?: string;
   customName?: string;
   customUnit?: string;
+  /** For custom tasks: the project custom standard it uses (its minutes per unit become the standard time). */
+  customStandardId?: string;
   qty: number;
   targetMinutes: number;
   projectId: string;
@@ -60,7 +76,13 @@ export interface AssignInput {
 /** A person's day: how it's split, what they aim for in the morning and what they report in the evening. */
 /** A custom block covers something outside the task list, e.g. an urgent priority that came up. */
 export interface CustomBlock { title: string; priority: boolean; targetQty: number; unit: string; achieved?: number; projectId?: string }
-export interface DayBlock { id: string; start: string; end: string; projectId: string; taskIds: string[]; custom?: CustomBlock }
+export interface DayBlock {
+  id: string; start: string; end: string; projectId: string; taskIds: string[]; custom?: CustomBlock;
+  /** Time it really took, recorded at end of day (planned 60, actual 45 or 90). */
+  actualMinutes?: number;
+}
+/** Extra hours worked outside the plan: a start / end or just a duration, what it was, and the project (optional). */
+export interface ExtraHours { id: string; start?: string; end?: string; minutes: number; work: string; projectId?: string }
 export type ProjectNumbers = Record<string, Record<string, number>>; // projectId -> metricId -> value
 export interface DailyUpdate {
   plan: DayBlock[];
@@ -73,27 +95,40 @@ export interface DailyUpdate {
   /** Free-form extras for anything that came up: "label: qty". */
   sodCustom?: CustomRow[];
   eodCustom?: CustomRow[];
+  /** Extra hours recorded for the day. */
+  extra: ExtraHours[];
+  /** Target vs actual by task type, frozen automatically when the end-of-day update is sent. */
+  eodSnapshot?: Snapshot;
 }
 export interface CustomRow { id: string; label: string; qty: number }
-export const emptyDaily = (): DailyUpdate => ({ plan: [], sodNote: '', sodTargets: {}, eodNote: '', eodActuals: {}, sodCustom: [], eodCustom: [] });
+export const emptyDaily = (): DailyUpdate => ({ plan: [], sodNote: '', sodTargets: {}, eodNote: '', eodActuals: {}, sodCustom: [], eodCustom: [], extra: [] });
 
 /** Lunch is fixed for everyone, every day. */
 export const LUNCH = { start: '13:00', end: '14:00' };
+
+/** Handover options: what happens to the previous owner. */
+export type TransferMode = 'remove-me' | 'stay-admin' | 'stay-member';
+export type CustomStandardInput = { id?: string; name: string; unit: string; minutes: number };
 
 interface Actions {
   setMe: (id: string) => void;
   startTask: (id: string) => void;
   undoStart: (id: string) => void;
+  /** Records 'submitted', or 'resubmitted' (and resubmits + 1) when it had feedback before. */
   submitForReview: (id: string, doneQty: number, minutes: number, reviewerId: string) => void;
   approve: (id: string) => void;
   sendBack: (id: string, text: string) => void;
   assign: (a: AssignInput) => void;
   assignMany: (items: AssignInput[]) => void;
   forwardReview: (taskId: string, toId: string, note?: string) => void;
+  /** Saving with eodAt freezes eodSnapshot and finalises that date on the person's projects. */
   saveDaily: (personId: string, date: string, patch: Partial<DailyUpdate>) => void;
+  /** Saving with eowAt freezes eowSnapshot. */
   saveWeekly: (personId: string, weekStart: string, patch: Partial<WeeklyUpdate>) => void;
-  updateProject: (projectId: string, patch: Partial<Pick<Project, 'name' | 'client' | 'description' | 'startDate' | 'endDate' | 'hours' | 'standards'>>) => void;
+  updateProject: (projectId: string, patch: Partial<Pick<Project, 'name' | 'client' | 'description' | 'startDate' | 'endDate' | 'hours' | 'standards'>> & { customStandards?: CustomStandardInput[] }) => void;
   setWeekValue: (projectId: string, metric: string, base: number) => void;
+  /** Save several of this week's manual numbers at once (same meaning as setWeekValue's base). */
+  setWeekValues: (projectId: string, bases: Counts) => void;
   setMetricPeriods: (projectId: string, metricId: string, periods: ('week' | 'month')[]) => void;
   setProfile: (id: string, patch: Profile) => void;
   editTask: (id: string, p: { qty: number; targetMinutes: number; title: string }) => void;
@@ -106,8 +141,25 @@ interface Actions {
   renameMetric: (projectId: string, metricId: string, label: string) => void;
   addMeeting: (projectId: string, m: { company: string; contact: string; date: string; time: string }) => void;
   postUpdate: (projectId: string, text: string) => void;
-  proposeProject: (p: { name: string; client: string; description: string; startDate: string; endDate: string; hours: Record<string, number>; standards?: Project['standards'] }) => string;
+  proposeProject: (p: {
+    name: string; client: string; description: string; startDate: string; endDate: string; hours: Record<string, number>;
+    standards?: Project['standards']; customStandards?: CustomStandardInput[]; admins?: string[]; weekTarget?: Counts; weekPlans?: Record<string, Counts>;
+  }) => string;
   decideProject: (id: string, approve: boolean) => void;
+  // Project admins and handover (owner or management only).
+  setProjectAdmins: (projectId: string, ids: string[]) => void;
+  addProjectAdmin: (projectId: string, personId: string) => void;
+  removeProjectAdmin: (projectId: string, personId: string) => void;
+  transferProject: (projectId: string, toId: string, mode: TransferMode) => void;
+  // Week planning (owner / admins).
+  setWeekPlan: (projectId: string, weekStart: string, metric: string, value: number) => void;
+  saveWeekPlan: (projectId: string, weekStart: string, counts: Counts) => void;
+  clearWeekPlan: (projectId: string, weekStart: string) => void;
+  // Custom standard tasks (owner / admins). addCustomStandard returns the new id.
+  addCustomStandard: (projectId: string, s: { name: string; unit: string; minutes: number }) => string;
+  removeCustomStandard: (projectId: string, id: string) => void;
+  /** Finalise a day's numbers: one project (owner / admins), or every project I am on when projectId is omitted. */
+  finalizeDay: (projectId?: string, date?: string) => void;
   readAll: () => void;
   readNotice: (id: string) => void;
   createConv: (name: string, memberIds: string[], group: boolean) => string;
@@ -129,33 +181,297 @@ const ANIMALS = ['Otter', 'Panda', 'Koala', 'Heron', 'Falcon', 'Fox', 'Lynx', 'R
 const ADJ = ['Calm', 'Sunny', 'Brave', 'Quiet', 'Witty', 'Kind', 'Swift', 'Merry'];
 const alias = () => `${ADJ[Math.floor(Math.random() * 8)]} ${ANIMALS[Math.floor(Math.random() * 8)]}`;
 
+/** Projects a person counts towards (team member, owner or admin), active only. */
+const projectsOf = (projects: Project[], personId: string) =>
+  projects.filter((p) => p.status === 'active' && (p.teamIds.includes(personId) || p.pmId === personId || (p.admins ?? []).includes(personId)));
+
+/** Marks `date` finalised on every project the person is on (keeps the first time it was finalised). */
+function finalizeFor(projects: Project[], personId: string, date: string, at: string, daily?: Record<string, DailyUpdate>): Project[] {
+  const ids = new Set(projectsOf(projects, personId).map((p) => p.id));
+  // With `daily`, a project's day finalises only once every team member has sent end of day.
+  const allSent = (p: Project) => !daily || p.teamIds.every((m) => m === personId || !!daily[`${m}|${date}`]?.eodAt);
+  return projects.map((p) => (ids.has(p.id) && !p.finalized?.[date] && allSent(p) ? { ...p, finalized: { ...p.finalized, [date]: at } } : p));
+}
+
+/** Hours per day: 0 to 12, rounded to quarter hours (so 1.5 or 0.75 are fine). */
+function cleanHours(h: Record<string, number>): Record<string, number> {
+  const out: Record<string, number> = {};
+  Object.entries(h).forEach(([k, v]) => {
+    const n = Number(v);
+    if (!Number.isFinite(n) || n < 0 || n > 12) throw new Error('Hours per day must be between 0 and 12.');
+    out[k] = Math.round(n * 4) / 4;
+  });
+  return out;
+}
+function cleanCustomStandards(list: CustomStandardInput[]): CustomStandard[] {
+  const seen = new Set<string>();
+  return list.map((s) => {
+    const name = (s.name ?? '').trim();
+    if (!name) throw new Error('Give every custom task a name.');
+    if (seen.has(name.toLowerCase())) throw new Error(`"${name}" is listed twice.`);
+    seen.add(name.toLowerCase());
+    const minutes = Number(s.minutes);
+    if (!Number.isFinite(minutes) || !(minutes > 0) || minutes > 480) throw new Error(`Set the minutes per unit for "${name}" (above 0).`);
+    return { id: s.id || `cs-${uid()}`, name, unit: (s.unit ?? '').trim() || 'items', minutes: Math.round(minutes * 100) / 100 };
+  });
+}
+function cleanCounts(counts: Counts): Counts {
+  return Object.fromEntries(Object.entries(counts).map(([k, v]) => {
+    const n = Number(v);
+    if (!Number.isFinite(n) || n < 0) throw new Error('Targets must be zero or more.');
+    return [k, Math.round(n)];
+  }));
+}
+const fmtM = (m: number) => (m >= 60 ? `${Math.floor(m / 60)}h${m % 60 ? ` ${m % 60}m` : ''}` : `${m}m`);
+
+/** A starter day plan built from the hours each project gets, beginning at 10:00 (decimal hours supported). */
+export function defaultPlan(projects: Project[], personId: string): DayBlock[] {
+  // Fill 10:00 to 13:00 then 14:00 to 19:00 with each project's hours, splitting around lunch.
+  const out: DayBlock[] = [];
+  const slots = [[600, 780], [840, 1140]];
+  const hm = (n: number) => `${String(Math.floor(n / 60)).padStart(2, '0')}:${String(n % 60).padStart(2, '0')}`;
+  let si = 0;
+  let cur = slots[0][0];
+  for (const p of projects.filter((x) => x.status === 'active' && (x.hours[personId] ?? 0) > 0)) {
+    let left = Math.round((p.hours[personId] * 60) / 15) * 15;
+    while (left > 0 && si < slots.length) {
+      const end = Math.min(slots[si][1], cur + left);
+      out.push({ id: uid(), start: hm(cur), end: hm(end), projectId: p.id, taskIds: [] });
+      left -= end - cur;
+      cur = end;
+      if (cur >= slots[si][1]) { si++; if (si < slots.length) cur = slots[si][0]; }
+    }
+  }
+  return out;
+}
+
+/** Morning targets + evening reports (with actual time and extra hours) for the last two weeks, for everyone on the team. */
+function historyDaily(projects: Project[], tasks: Task[]): Record<string, DailyUpdate> {
+  const NOTES_AM = ['Clear the follow-ups first, then fresh L1s.', 'Prospect list for the new ICP, then messages.', 'Calls in the morning, emails after lunch.', 'Finish yesterday\'s carry-over, then the new batch.', 'Deck review first, outreach after.'];
+  const NOTES_PM = ['Good day, two warm replies.', 'Hit the message target, calls were quiet.', 'CRM was slow but caught up by 6.', 'One meeting interest from a VP Sales.', 'Carry-over: 10 follow-ups for tomorrow.'];
+  const EXTRA_WORK = ['Cleaned up the CRM list', 'Client call prep', 'Finished the carry-over follow-ups', 'Proposal revision', 'Research for tomorrow\'s prospects', 'Fixed bounced emails'];
+  const EXTRA_CHANCE: Record<string, number> = { bharath: 0.45, udhaya: 0.25 };
+  let seed = 11;
+  const rnd = () => ((seed = (seed * 9301 + 49297) % 233280) / 233280);
+  const pickOne = <T,>(xs: T[]) => xs[Math.floor(rnd() * xs.length)];
+  const hm = (n: number) => `${String(Math.floor(n / 60)).padStart(2, '0')}:${String(n % 60).padStart(2, '0')}`;
+  const out: Record<string, DailyUpdate> = {};
+  pastWorkingDays(10).forEach((date) => {
+    Object.entries(WORK).forEach(([who, pids]) => {
+      if (rnd() < 0.08) return; // the odd day someone forgot
+      const plan = defaultPlan(projects, who);
+      if (rnd() < 0.3 && plan.length) {
+        const last = plan[plan.length - 1];
+        if (last.end > '17:00') {
+          last.end = '17:00';
+          plan.push({ id: uid(), start: '17:00', end: '19:00', projectId: '', taskIds: [], custom: { title: pickOne(['Urgent client call prep', 'Ad-hoc list cleanup', 'Proposal revision']), priority: true, targetQty: 5, unit: 'items', achieved: 4 + Math.floor(rnd() * 2) } });
+        }
+      }
+      const sent = rnd() < 0.9;
+      if (sent) plan.forEach((b) => {
+        const planned = toMinutes(b.end) - toMinutes(b.start);
+        b.actualMinutes = Math.max(15, Math.round((planned * pickOne([0.75, 0.85, 1, 1, 1, 1, 1.1, 1.25, 1.5])) / 5) * 5);
+      });
+      const extra: ExtraHours[] = [];
+      if (sent && rnd() < (EXTRA_CHANCE[who] ?? 0.18)) {
+        const start = 19 * 60 + pickOne([0, 15, 30]);
+        const minutes = pickOne([30, 45, 60, 90]);
+        extra.push({ id: uid(), start: hm(start), end: hm(start + minutes), minutes, work: pickOne(EXTRA_WORK), projectId: pickOne(pids) });
+      }
+      const sodTargets: ProjectNumbers = {};
+      const eodActuals: ProjectNumbers = {};
+      pids.forEach((pid) => {
+        const resp = 2 + Math.floor(rnd() * 4);
+        sodTargets[pid] = { responses: resp, interest: 1 };
+        eodActuals[pid] = { responses: Math.max(0, resp + Math.floor(rnd() * 4) - 2), interest: Math.floor(rnd() * 3) };
+      });
+      const rec: DailyUpdate = {
+        ...emptyDaily(), plan, sodTargets, eodActuals, extra,
+        sodNote: pickOne(NOTES_AM), eodNote: pickOne(NOTES_PM),
+        sodAt: new Date(`${date}T10:${String(Math.floor(rnd() * 20)).padStart(2, '0')}:00`).toISOString(),
+        eodAt: sent ? new Date(`${date}T18:${String(30 + Math.floor(rnd() * 29)).padStart(2, '0')}:00`).toISOString() : undefined,
+      };
+      if (rec.eodAt) rec.eodSnapshot = daySnapshot(tasks, who, date, rec, rec.eodAt);
+      out[`${who}|${date}`] = rec;
+    });
+  });
+  return out;
+}
+
+function seedWeekly(tasks: Task[]): Record<string, WeeklyUpdate> {
+  const ws = weekStart(0);
+  const lw = weekStart(-1);
+  const T = (label: string, qty: number) => ({ id: `w${label}${qty}`, label, qty });
+  const out: Record<string, WeeklyUpdate> = {};
+  const goals: Record<string, [string, string, [string, number][], [string, number][]]> = {
+    udhaya: ['300 personalised L1s across Northwind + Helios, BD prospect list.', 'Hit L1s, prospect list 80% done.', [['Meetings interest', 3], ['Case studies', 1]], [['Meetings interest', 4], ['Case studies', 1]]],
+    bharath: ['150 calls, 10 interested leads.', '142 calls, 11 interested, two demos booked.', [['Calls', 150], ['Interested leads', 10]], [['Calls', 142], ['Interested leads', 11]]],
+    sachi: ['Helios deck v3 + 200 L2 follow-ups.', 'Deck shipped, 180 L2s.', [['L2 follow-ups', 200], ['Deck versions', 1]], [['L2 follow-ups', 180], ['Deck versions', 1]]],
+    bheeshma: ['Book 4 Northwind meetings, clear review queue daily.', '4 meetings booked ✓', [['Meetings booked', 4]], [['Meetings booked', 4]]],
+    alok: ['Helios: 3 meetings, new CFO sequence live.', '2 meetings, sequence live.', [['Meetings booked', 3]], [['Meetings booked', 2]]],
+    abisho: ['BD: 20 agency founders contacted.', '24 contacted, 3 replies.', [['Founders contacted', 20]], [['Founders contacted', 24]]],
+    prajwal: ['Support Northwind + Helios, 200 emails.', '210 emails sent.', [['Emails', 200]], [['Emails', 210]]],
+  };
+  const fri = addDays(lw, 4);
+  Object.entries(goals).forEach(([who, [tn, en, tc, ec]]) => {
+    const rec: WeeklyUpdate = { targetsNote: tn, targetsCustom: tc.map(([l, q]) => T(l, q)), targetsAt: new Date(lw + 'T10:15:00').toISOString(), eowNote: en, eowCustom: ec.map(([l, q]) => T(l, q)), eowAt: new Date(fri + 'T18:40:00').toISOString() };
+    rec.eowSnapshot = weekSnapshot(tasks, who, lw, rec, rec.eowAt);
+    out[`${who}|${lw}`] = rec;
+    if (who !== 'prajwal') out[`${who}|${ws}`] = { ...emptyWeekly(), targetsNote: tn, targetsCustom: tc.map(([l, q]) => T(l, q)), targetsAt: new Date(ws + 'T10:20:00').toISOString() };
+  });
+  return out;
+}
+
+/** Today: four people already sent end of day (with actual time and extra hours), three only set targets. */
+function seedToday(): Record<string, DailyUpdate> {
+  const at = (h: number, m: number) => new Date(new Date().setHours(h, m, 0, 0)).toISOString();
+  const B = (id: string, start: string, end: string, projectId: string, actualMinutes?: number, taskIds: string[] = []): DayBlock => ({ id, start, end, projectId, taskIds, actualMinutes });
+  const d = day(0);
+  return {
+    [`alok|${d}`]: {
+      ...emptyDaily(),
+      plan: [B('ba1', '10:00', '13:00', 'helios', 170, ['t20']), B('ba2', '14:00', '17:00', 'helios', 205, ['t21'])],
+      sodNote: 'Helios CFO sequence: L2 follow-ups + 2 calls.', sodTargets: { helios: { responses: 5, interest: 2 } }, sodCustom: [{ id: 'a1', label: 'CFO list review', qty: 1 }], sodAt: at(10, 7),
+      eodNote: 'Good replies on L2s, one CFO wants a deck.', eodActuals: { helios: { responses: 6, interest: 1 } }, eodCustom: [{ id: 'a2', label: 'CFO list review', qty: 1 }], eodAt: at(18, 35),
+      extra: [{ id: 'xa1', start: '09:00', end: '09:45', minutes: 45, work: 'Prepped the CFO list before stand-up', projectId: 'helios' }],
+    },
+    [`abisho|${d}`]: { ...emptyDaily(), sodNote: 'BD outreach to 15 agency founders.', sodTargets: { bd: { responses: 3, interest: 1, calls: 6 } }, sodAt: at(10, 2) },
+    [`prajwal|${d}`]: {
+      ...emptyDaily(),
+      plan: [B('bp1', '10:00', '13:00', 'northwind', 180, ['t22']), B('bp2', '14:00', '15:00', 'northwind', 75), B('bp3', '15:00', '19:00', 'helios', 220, ['t23'])],
+      sodNote: 'Emails for Northwind, WhatsApp batch for Helios.', sodTargets: { northwind: { responses: 3 }, helios: { responses: 2 } }, sodAt: at(10, 18),
+      eodNote: 'Emails done; WhatsApp batch half done, rest tomorrow.', eodActuals: { northwind: { responses: 4 }, helios: { responses: 1 } }, eodCustom: [{ id: 'p1', label: 'Helped Sachi with deck data', qty: 1 }], eodAt: at(18, 50),
+      extra: [{ id: 'xp1', minutes: 30, work: 'Helped Sachi with the Helios deck data', projectId: 'helios' }],
+    },
+  };
+}
+
+function seedDaily(projects: Project[], tasks: Task[]): Record<string, DailyUpdate> {
+  const yd = previousWorkingDay();
+  const at = (h: number, m: number) => new Date(new Date().setHours(h, m, 0, 0)).toISOString();
+  const history = historyDaily(projects, tasks);
+  const out: Record<string, DailyUpdate> = {
+    ...history,
+    ...seedToday(),
+    [`udhaya|${day(0)}`]: {
+      ...emptyDaily(),
+      plan: [
+        { id: 'b1', start: '10:00', end: '13:00', projectId: 'northwind', taskIds: [] },
+        { id: 'b2', start: '14:00', end: '16:00', projectId: 'helios', taskIds: ['t13', 't14'] },
+        { id: 'b3', start: '16:00', end: '18:00', projectId: 'bd', taskIds: ['t15'] },
+      ],
+      sodNote: 'Finish the QBR deck first, then personalised L1s.',
+      sodCustom: [{ id: 'sc1', label: 'Case-study one-pager for Northwind', qty: 1 }],
+      sodTargets: { northwind: { messages: 60 } },
+      sodAt: at(10, 5),
+    },
+    [`bharath|${day(0)}`]: {
+      ...emptyDaily(),
+      plan: [
+        { id: 'b4', start: '10:00', end: '13:00', projectId: 'northwind', taskIds: ['t8', 't10'], actualMinutes: 195 },
+        { id: 'b4b', start: '14:00', end: '19:00', projectId: 'northwind', taskIds: ['t26', 't18'], actualMinutes: 270 },
+      ],
+      sodNote: 'Telecalling block in the morning, emails after lunch.',
+      sodTargets: { northwind: { calls: 25, responses: 4 } },
+      sodAt: at(10, 12),
+      eodNote: 'Great call day, 2 people asked for a demo next week.',
+      eodActuals: { northwind: { calls: 28, responses: 5, interest: 2 } },
+      eodAt: at(18, 40),
+      extra: [
+        { id: 'xb1', start: '08:30', end: '09:30', minutes: 60, work: 'Call list cleanup before the shift', projectId: 'northwind' },
+        { id: 'xb2', start: '13:00', end: '13:30', minutes: 30, work: 'Worked through lunch on WhatsApp replies', projectId: 'northwind' },
+      ],
+    },
+    [`sachi|${day(0)}`]: {
+      ...emptyDaily(),
+      plan: [
+        { id: 'b5', start: '10:00', end: '12:00', projectId: 'helios', taskIds: [], custom: { title: 'Helios pitch deck fixes for CFO call', priority: true, targetQty: 8, unit: 'slides', projectId: 'helios' } },
+        { id: 'b6', start: '12:00', end: '13:00', projectId: 'helios', taskIds: [] },
+        { id: 'b6b', start: '14:00', end: '19:00', projectId: 'helios', taskIds: [] },
+      ],
+      sodNote: 'Deck fixes first (urgent), then L2 follow-ups.',
+      sodTargets: { helios: { messages: 80, responses: 6 } },
+      sodAt: at(10, 3),
+    },
+    [`bheeshma|${day(0)}`]: {
+      ...emptyDaily(),
+      plan: [
+        { id: 'bb1', start: '10:00', end: '13:00', projectId: 'northwind', taskIds: [], actualMinutes: 190 },
+        { id: 'bb2', start: '14:00', end: '15:00', projectId: 'northwind', taskIds: [], actualMinutes: 60 },
+        { id: 'bb3', start: '15:00', end: '17:00', projectId: 'bd', taskIds: ['t17', 't19'], actualMinutes: 100 },
+      ],
+      sodNote: 'Review the team queue by noon, client call at 3.',
+      sodTargets: { northwind: { meetings: 1, interest: 2 } },
+      sodAt: at(10, 20),
+      eodNote: 'Approved 4 reviews, booked Acme Cloud for tomorrow.',
+      eodActuals: { northwind: { meetings: 1, interest: 3 } },
+      eodAt: at(18, 55),
+    },
+    [`udhaya|${yd}`]: {
+      ...emptyDaily(),
+      ...(history[`udhaya|${yd}`] ?? {}),
+      sodNote: 'Follow-ups and WhatsApp batch.',
+      eodNote: 'Follow-ups 20/25 done, rest carried to today. Two positive replies.',
+      eodActuals: { northwind: { responses: 2 } },
+      eodAt: new Date(`${yd}T18:45:00`).toISOString(),
+    },
+  };
+  // Keep today's seeded times realistic: nothing in the future. Late end-of-day updates become targets-only.
+  const nowIso = new Date().toISOString();
+  Object.entries(out).forEach(([key, rec]) => {
+    if (key.split('|')[1] !== day(0)) return;
+    if (rec.eodAt && rec.eodAt > nowIso) {
+      rec.eodAt = undefined; rec.eodNote = ''; rec.eodActuals = {}; rec.eodCustom = []; rec.extra = [];
+      rec.plan = rec.plan.map((b) => ({ ...b, actualMinutes: undefined }));
+    }
+    if (rec.sodAt && rec.sodAt > nowIso) rec.sodAt = new Date(Date.now() - 5 * 60_000).toISOString();
+  });
+  // Freeze today's end-of-day snapshots (and any record that has eodAt but no snapshot yet).
+  Object.entries(out).forEach(([key, rec]) => {
+    if (!rec.eodAt) return;
+    const [who, date] = key.split('|');
+    if (!rec.eodSnapshot || date === day(0) || date === yd) rec.eodSnapshot = daySnapshot(tasks, who, date, rec, rec.eodAt);
+  });
+  return out;
+}
+
 function seed(): Data {
   const ago = (m: number) => new Date(Date.now() - m * 60000).toISOString();
+  let projects = seedProjects();
+  const tasks = seedTasks(projects);
+  const daily = seedDaily(projects, tasks);
+  Object.entries(daily).sort((a, b) => (a[1].eodAt ?? '').localeCompare(b[1].eodAt ?? '')).forEach(([key, d]) => {
+    if (!d.eodAt) return;
+    const [who, date] = key.split('|');
+    projects = finalizeFor(projects, who, date, d.eodAt, daily);
+  });
   return {
     me: 'udhaya',
     profiles: {},
-    tasks: seedTasks(),
-    projects: seedProjects(),
+    tasks,
+    projects,
     notices: [
-      { id: 'n1', to: 'bheeshma', text: 'Udhaya sent 30 prospect mapping to you for review', at: ago(20), read: false, kind: 'task' },
-      { id: 'n2', to: 'bheeshma', text: 'Bharath sent 60 templated 1st level messages to you for review', at: ago(45), read: false, kind: 'task' },
+      { id: 'n1', to: 'bheeshma', text: 'Udhaya sent 30 prospect mapping to you for review', at: ago(24), read: false, kind: 'task' },
+      { id: 'n2', to: 'bheeshma', text: 'Bharath resubmitted 60 templated 1st level messages for review (resubmit 1)', at: ago(42), read: false, kind: 'task' },
       { id: 'n3', to: 'komala', text: 'Sachi sent Helios pitch deck v2 to you for review', at: ago(30), read: false, kind: 'task' },
       { id: 'n4', to: 'udhaya', text: 'Bheeshma left feedback on 40 2nd level messages', at: ago(60), read: false, kind: 'task' },
-      { id: 'n5', to: 'udhaya', text: 'Komala gave you a priority task: Northwind QBR deck', at: ago(90), read: true, kind: 'task' },
+      { id: 'n5', to: 'udhaya', text: 'Komala gave you a priority task: Northwind QBR deck', at: ago(300), read: true, kind: 'task' },
+      { id: 'n6', to: 'prajwal', text: 'Bheeshma made you an admin of Northwind SaaS - US', at: ago(60 * 24 * 6), read: true, kind: 'project' },
+      { id: 'n7', to: 'alok', text: 'Prajwal sent 45 WhatsApp messages to you for review', at: ago(54), read: false, kind: 'task' },
     ],
     convs: [
       { id: 'c-all', name: 'Everyone', memberIds: PEOPLE.map((p) => p.id), group: true },
       { id: 'c-fri', name: 'Friday lunch plans', memberIds: ['udhaya', 'bheeshma', 'bharath', 'sachi'], group: true },
     ],
     msgs: [
-      { id: 'm1', convId: 'c-all', alias: 'Calm Otter', text: 'Whoever refilled the chai machine — legend ☕', at: ago(120) },
+      { id: 'm1', convId: 'c-all', alias: 'Calm Otter', text: 'Whoever refilled the chai machine, legend ☕', at: ago(120) },
       { id: 'm2', convId: 'c-all', alias: 'Sunny Panda', text: 'CRM is crawling today, anyone else?', at: ago(70) },
       { id: 'm3', convId: 'c-all', alias: 'Brave Koala', text: 'Yes 😅 coffee break till it loads', at: ago(65) },
       { id: 'm4', convId: 'c-fri', alias: 'Witty Falcon', text: 'Biryani or dosa this Friday?', at: ago(40) },
     ],
     aliases: {},
-    daily: seedDaily(),
-    weekly: seedWeekly(),
+    daily,
+    weekly: seedWeekly(tasks),
   };
 }
 
@@ -178,13 +494,72 @@ export const useStore = create<Data & Actions>()(
         if (!t) throw new Error('That task no longer exists.');
         return t;
       };
+      /** A timeline entry by the current viewer, appended to the task's history. */
+      const log = (t: Task, action: TaskEvent['action'], extra: Partial<TaskEvent> = {}): TaskEvent[] => [...(t.history ?? []), { at: iso(), by: get().me, action, ...extra }];
       const proj = (id: string, fn: (p: Project) => Project) => set((s) => ({ projects: s.projects.map((p) => (p.id === id ? fn(p) : p)) }));
-      const owns = (pid: string) => {
+      const findProject = (pid: string) => {
         const p = get().projects.find((x) => x.id === pid);
         if (!p) throw new Error('Project not found.');
-        if (p.pmId !== get().me && !isLeadRole(roleOf(get().me))) throw new Error('Only the project owner can change this.');
         return p;
       };
+      /** Owner, admins and management. */
+      const owns = (pid: string) => {
+        const p = findProject(pid);
+        if (!canManage(p, get().me)) throw new Error('Only the project owner or a project admin can change this.');
+        return p;
+      };
+      /** Owner and management only (admins list, handover). */
+      const ownerOnly = (pid: string) => {
+        const p = findProject(pid);
+        if (p.pmId !== get().me && !isLeadRole(roleOf(get().me))) throw new Error('Only the project owner can do this.');
+        return p;
+      };
+      const leads = () => PEOPLE.filter((x) => isLeadRole(x.role)).map((x) => x.id);
+      /** Builds a new task from an assign request (validates, works out the standard time, records 'assigned'). */
+      const makeTask = (a: AssignInput, priority: boolean): Task => {
+        const me = get().me;
+        if (!a.assigneeId) throw new Error('Pick who the task is for.');
+        if (!a.projectId) throw new Error('Pick a project for the task.');
+        if (!(a.qty > 0)) throw new Error('Quantity must be at least 1.');
+        if (!(a.targetMinutes > 0)) throw new Error('Target time must be at least 1 minute.');
+        const p = findProject(a.projectId);
+        if (!canManage(p, me)) throw new Error(`Only the owner or an admin of ${p.name} can assign its tasks.`);
+        if (p.status !== 'active') throw new Error(`${p.name} is still waiting for approval.`);
+        let typeId = a.typeId;
+        let cs = typeId === 'custom' ? findCustomStandard(p, a.customStandardId) ?? findCustomStandard(p, a.customName) : undefined;
+        if (typeId !== 'custom' && !TASK_TYPES.some((x) => x.id === typeId)) {
+          cs = findCustomStandard(p, typeId);
+          if (!cs) throw new Error('Pick a task type.');
+          typeId = 'custom';
+        }
+        const custom = typeId === 'custom';
+        // A custom task that matches a project custom standard takes the standard's name, unit and time.
+        const customName = custom ? cs?.name || a.customName?.trim() || '' : undefined;
+        if (custom && !customName) throw new Error('Name the custom task.');
+        const type = TASK_TYPES.find((x) => x.id === typeId);
+        const unit = custom ? cs?.unit || a.customUnit?.trim() || 'items' : type?.unit ?? 'items';
+        const title = a.title?.trim() || (custom ? `${a.qty} ${customName}` : taskTitle(typeId, a.qty, a.variant));
+        const targetMinutes = Math.round(a.targetMinutes);
+        const at = iso();
+        return {
+          id: uid(), typeId, variant: custom ? undefined : a.variant, customName, customStandardId: cs?.id, unit, qty: a.qty, targetMinutes,
+          standardMinutes: standardFor(p, typeId, a.qty, a.variant, cs?.id) ?? targetMinutes,
+          projectId: a.projectId, assigneeId: a.assigneeId, assignedById: me, priority, status: 'todo',
+          feedback: [], createdAt: at, date: isWorkingDay(day(0)) ? day(0) : nextWorkingDay(day(0)), reminders: 0, reviews: [], title,
+          history: [{ at, by: me, action: 'assigned', to: a.assigneeId }], resubmits: 0,
+        };
+      };
+      const setWeekBases = (pid: string, bases: Counts) => proj(pid, (x) => {
+        const week = { ...x.week };
+        const month = { ...x.month };
+        Object.entries(bases).forEach(([metric, base]) => {
+          const v = Math.max(0, Math.round(Number(base) || 0));
+          const delta = v - (week[metric] ?? 0);
+          week[metric] = v;
+          month[metric] = Math.max(0, (month[metric] ?? 0) + delta);
+        });
+        return { ...x, week, month };
+      });
 
       return {
         ...seed(),
@@ -196,58 +571,44 @@ export const useStore = create<Data & Actions>()(
           if (!(doneQty > 0)) throw new Error('Enter how many you completed.');
           if (!(minutes > 0)) throw new Error('Enter the minutes you took.');
           if (!reviewerId) throw new Error('Choose who should review it.');
-          patch(id, { status: 'in_review', doneQty, minutes, reviewerId });
-          notify(reviewerId, `${first(t.assigneeId)} sent ${t.title} to you for review`);
+          const again = t.status === 'changes' || t.reviews.some((r) => r.verdict === 'feedback') || (t.history ?? []).some((e) => e.action === 'feedback');
+          const resubmits = (t.resubmits ?? 0) + (again ? 1 : 0);
+          const at = iso();
+          patch(id, {
+            status: 'in_review', doneQty, minutes, reviewerId, submittedAt: at, resubmits,
+            history: [...(t.history ?? []), { at, by: get().me, action: again ? 'resubmitted' : 'submitted', to: reviewerId }],
+          });
+          notify(reviewerId, again ? `${first(t.assigneeId)} resubmitted ${t.title} for review (resubmit ${resubmits})` : `${first(t.assigneeId)} sent ${t.title} to you for review`);
         },
         approve: (id) => {
           const t = task(id);
-          patch(id, { status: 'done', reviews: [...t.reviews, { by: get().me, verdict: 'approved', at: iso() }] });
+          const at = iso();
+          patch(id, { status: 'done', approvedAt: at, reviews: [...t.reviews, { by: get().me, verdict: 'approved', at }], history: [...(t.history ?? []), { at, by: get().me, action: 'approved' }] });
           notify(t.assigneeId, `${first(get().me)} approved ${t.title} ✓`);
         },
         sendBack: (id, text) => {
           const t = task(id);
           if (!text.trim()) throw new Error('Feedback cannot be empty.');
-          patch(id, { status: 'changes', feedback: [...t.feedback, { by: get().me, text: text.trim(), at: iso() }], reviews: [...t.reviews, { by: get().me, verdict: 'feedback', at: iso() }] });
+          const at = iso();
+          patch(id, {
+            status: 'changes',
+            feedback: [...t.feedback, { by: get().me, text: text.trim(), at }],
+            reviews: [...t.reviews, { by: get().me, verdict: 'feedback', at }],
+            history: [...(t.history ?? []), { at, by: get().me, action: 'feedback', note: text.trim() }],
+          });
           notify(t.assigneeId, `${first(get().me)} left feedback on ${t.title}`);
         },
         assign: (a) => {
           const me = get().me;
-          if (!a.assigneeId) throw new Error('Pick who the task is for.');
-          if (!(a.qty > 0)) throw new Error('Quantity must be at least 1.');
-          if (!(a.targetMinutes > 0)) throw new Error('Target time must be at least 1 minute.');
-          const custom = a.typeId === 'custom';
-          if (custom && !a.customName?.trim()) throw new Error('Name the custom task.');
-          const type = TASK_TYPES.find((x) => x.id === a.typeId);
-          const unit = custom ? a.customUnit?.trim() || 'items' : type?.unit ?? 'items';
-          const title = a.title?.trim() || (custom ? `${a.qty} ${a.customName!.trim()}` : taskTitle(a.typeId, a.qty, a.variant));
           // Anything from a manager or founder is automatically a priority.
-          const priority = isLeadRole(roleOf(me));
-          const t: Task = {
-            id: uid(), typeId: a.typeId, variant: a.variant, unit, qty: a.qty, targetMinutes: Math.round(a.targetMinutes),
-            projectId: a.projectId, assigneeId: a.assigneeId, assignedById: me, priority, status: 'todo',
-            feedback: [], createdAt: iso(), date: day(0), reminders: 0, reviews: [], title,
-          };
+          const t = makeTask(a, isLeadRole(roleOf(me)));
           set((s) => ({ tasks: [t, ...s.tasks] }));
-          notify(a.assigneeId, `${first(me)} gave you ${priority ? 'a priority task' : 'a task'}: ${title}`);
+          notify(a.assigneeId, `${first(me)} gave you ${t.priority ? 'a priority task' : 'a task'}: ${t.title}`);
         },
         assignMany: (items) => {
           if (!items.length) throw new Error('Add at least one task to the list first.');
           const me = get().me;
-          const made: Task[] = items.map((a) => {
-            const priority = !!a.priority;
-            if (!a.assigneeId) throw new Error('Every task needs a person.');
-            if (!(a.qty > 0)) throw new Error('Quantity must be at least 1.');
-            if (!(a.targetMinutes > 0)) throw new Error('Target time must be at least 1 minute.');
-            const custom = a.typeId === 'custom';
-            if (custom && !a.customName?.trim()) throw new Error('Name the custom task.');
-            const type = TASK_TYPES.find((x) => x.id === a.typeId);
-            return {
-              id: uid(), typeId: a.typeId, variant: a.variant, unit: custom ? a.customUnit?.trim() || 'items' : type?.unit ?? 'items',
-              qty: a.qty, targetMinutes: Math.round(a.targetMinutes), projectId: a.projectId, assigneeId: a.assigneeId, assignedById: me,
-              priority, status: 'todo' as const, feedback: [], createdAt: iso(), date: day(0), reminders: 0, reviews: [],
-              title: a.title?.trim() || (custom ? `${a.qty} ${a.customName!.trim()}` : taskTitle(a.typeId, a.qty, a.variant)),
-            };
-          });
+          const made: Task[] = items.map((a) => makeTask(a, !!a.priority));
           set((s) => ({ tasks: [...made, ...s.tasks] }));
           const by = new Map<string, Task[]>();
           made.forEach((t) => by.set(t.assigneeId, [...(by.get(t.assigneeId) ?? []), t]));
@@ -261,12 +622,22 @@ export const useStore = create<Data & Actions>()(
           const t = task(id);
           if (!(p.qty > 0) || !(p.targetMinutes > 0)) throw new Error('Quantity and target time must be above zero.');
           if (!p.title.trim()) throw new Error('Title cannot be empty.');
-          patch(id, { qty: p.qty, targetMinutes: Math.round(p.targetMinutes), title: p.title.trim() });
+          const target = Math.round(p.targetMinutes);
+          const changes = [
+            p.qty !== t.qty && `quantity ${t.qty} to ${p.qty}`,
+            target !== t.targetMinutes && `target ${fmtM(t.targetMinutes)} to ${fmtM(target)}`,
+            p.title.trim() !== t.title && `title "${p.title.trim()}"`,
+          ].filter(Boolean) as string[];
+          const standardMinutes = t.standardMinutes && p.qty !== t.qty ? Math.max(1, Math.round((t.standardMinutes * p.qty) / t.qty)) : t.standardMinutes;
+          patch(id, {
+            qty: p.qty, targetMinutes: target, title: p.title.trim(), standardMinutes,
+            history: changes.length ? log(t, 'edited', { note: changes.join(', ') }) : t.history,
+          });
           notify(t.assigneeId, `${first(get().me)} updated your task: ${p.title.trim()}`);
         },
         remind: (id) => {
           const t = task(id);
-          patch(id, { reminders: t.reminders + 1 });
+          patch(id, { reminders: t.reminders + 1, history: log(t, 'reminded', { to: t.assigneeId }) });
           notify(t.assigneeId, `⏰ Reminder from ${first(get().me)}: ${t.title} is still open`);
         },
         setTarget: (pid, period, metric, value) => {
@@ -277,7 +648,7 @@ export const useStore = create<Data & Actions>()(
         setLock: (pid, period, locked) => {
           owns(pid);
           proj(pid, (x) => ({ ...x, [period === 'week' ? 'weekLocked' : 'monthLocked']: locked }));
-          if (locked) PEOPLE.filter((x) => isLeadRole(x.role)).forEach((x) => notify(x.id, `${first(get().me)} locked ${period}ly targets for ${get().projects.find((p) => p.id === pid)?.name}`, 'project'));
+          if (locked) leads().forEach((id) => notify(id, `${first(get().me)} locked ${period}ly targets for ${get().projects.find((p) => p.id === pid)?.name}`, 'project'));
         },
         bump: (pid, metric, delta) => {
           owns(pid);
@@ -287,44 +658,93 @@ export const useStore = create<Data & Actions>()(
         forwardReview: (id, toId, note) => {
           const t = task(id);
           if (!toId || toId === get().me) throw new Error('Choose someone else to forward to.');
-          patch(id, { reviewerId: toId, feedback: note?.trim() ? [...t.feedback, { by: get().me, text: `Forwarded: ${note.trim()}`, at: iso() }] : t.feedback });
+          const at = iso();
+          patch(id, {
+            reviewerId: toId,
+            feedback: note?.trim() ? [...t.feedback, { by: get().me, text: `Forwarded: ${note.trim()}`, at }] : t.feedback,
+            history: [...(t.history ?? []), { at, by: get().me, action: 'forwarded', to: toId, note: note?.trim() || undefined }],
+          });
           notify(toId, `${first(get().me)} forwarded ${first(t.assigneeId)}'s ${t.title} to you for review`);
           notify(t.assigneeId, `${first(get().me)} passed your ${t.title} to ${first(toId)} for review`);
         },
-        saveWeekly: (pid, ws, patchW) => {
-          const key = `${pid}|${ws}`;
-          set((s) => ({ weekly: { ...s.weekly, [key]: { ...(s.weekly[key] ?? emptyWeekly()), ...patchW } } }));
+        saveWeekly: (personId, ws, patchW) => {
+          const mon = weekStartOf(ws);
+          const key = `${personId}|${mon}`;
+          const next: WeeklyUpdate = { ...emptyWeekly(), ...get().weekly[key], ...patchW };
+          if ('eowAt' in patchW) {
+            if (patchW.eowAt) next.eowSnapshot = weekSnapshot(get().tasks, personId, mon, next, patchW.eowAt);
+            else delete next.eowSnapshot;
+          }
+          set((s) => ({ weekly: { ...s.weekly, [key]: next } }));
         },
         updateProject: (pid, patchP) => {
           owns(pid);
           if (patchP.name !== undefined && !patchP.name.trim()) throw new Error('Project name cannot be empty.');
           if (patchP.startDate && patchP.endDate && patchP.endDate < patchP.startDate) throw new Error('End date must be after the start date.');
           if (patchP.standards && Object.values(patchP.standards).some((v) => !(v > 0))) throw new Error('Standard times must be above zero.');
+          const hours = patchP.hours ? cleanHours(patchP.hours) : undefined;
+          const customStandards = patchP.customStandards ? cleanCustomStandards(patchP.customStandards) : undefined;
           proj(pid, (x) => {
-            const hours = patchP.hours ?? x.hours;
-            const teamIds = patchP.hours ? [...new Set([...Object.keys(hours).filter((k) => hours[k] > 0), x.pmId])] : x.teamIds;
-            return { ...x, ...patchP, hours, teamIds };
+            const h = hours ?? x.hours;
+            const teamIds = hours ? [...new Set([...Object.keys(h).filter((k) => h[k] > 0), x.pmId])] : x.teamIds;
+            return { ...x, ...patchP, hours: h, teamIds, customStandards: customStandards ?? x.customStandards };
           });
         },
         setWeekValue: (pid, metric, base) => {
           owns(pid);
-          proj(pid, (x) => {
-            const delta = base - (x.week[metric] ?? 0);
-            return { ...x, week: { ...x.week, [metric]: base }, month: { ...x.month, [metric]: Math.max(0, (x.month[metric] ?? 0) + delta) } };
-          });
+          setWeekBases(pid, { [metric]: base });
         },
-        saveDaily: (pid, date, patchD) => {
-          const key = `${pid}|${date}`;
+        setWeekValues: (pid, bases) => {
+          owns(pid);
+          setWeekBases(pid, bases);
+        },
+        saveDaily: (personId, date, patchIn) => {
+          const key = `${personId}|${date}`;
+          let patchD = patchIn;
           if (patchD.plan) {
             for (const b of patchD.plan) {
               if (b.custom ? !b.custom.title.trim() : !b.projectId) throw new Error(b.custom ? 'Give the custom block a title.' : 'Pick a project for every time block.');
               if (b.end <= b.start) throw new Error('A time block must end after it starts.');
+              if (b.actualMinutes != null && (!Number.isFinite(b.actualMinutes) || b.actualMinutes < 0 || b.actualMinutes > 720)) throw new Error('Actual time must be between 0 and 12 hours.');
             }
-            for (const b of patchD.plan) if (b.start < LUNCH.end && b.end > LUNCH.start) throw new Error('1pm – 2pm is lunch 🍽 — move that block around it.');
+            for (const b of patchD.plan) if (b.start < LUNCH.end && b.end > LUNCH.start) throw new Error('1pm to 2pm is lunch 🍽, move that block around it.');
             const sorted = [...patchD.plan].sort((a, b) => a.start.localeCompare(b.start));
-            for (let i = 1; i < sorted.length; i++) if (sorted[i].start < sorted[i - 1].end) throw new Error('Two time blocks overlap — adjust the times.');
+            for (let i = 1; i < sorted.length; i++) if (sorted[i].start < sorted[i - 1].end) throw new Error('Two time blocks overlap, adjust the times.');
+            patchD = { ...patchD, plan: patchD.plan.map((b) => (b.actualMinutes != null ? { ...b, actualMinutes: Math.round(b.actualMinutes) } : b)) };
           }
-          set((s) => ({ daily: { ...s.daily, [key]: { ...(s.daily[key] ?? emptyDaily()), ...patchD } } }));
+          if (patchD.extra) {
+            patchD = {
+              ...patchD,
+              extra: patchD.extra.map((x) => {
+                if (!x.work?.trim()) throw new Error('Say what the extra hours were for.');
+                let minutes = Math.round(Number(x.minutes) || 0);
+                if (x.start && x.end) {
+                  if (x.end <= x.start) throw new Error('Extra hours must end after they start.');
+                  minutes = toMinutes(x.end) - toMinutes(x.start);
+                }
+                if (!(minutes > 0) || minutes > 720) throw new Error('Extra time must be between 1 minute and 12 hours.');
+                return { ...x, id: x.id || uid(), work: x.work.trim(), minutes, projectId: x.projectId || undefined };
+              }),
+            };
+          }
+          const next: DailyUpdate = { ...emptyDaily(), ...get().daily[key], ...patchD };
+          if ('eodAt' in patchD) {
+            if (patchD.eodAt) next.eodSnapshot = daySnapshot(get().tasks, personId, date, next, patchD.eodAt);
+            else delete next.eodSnapshot;
+          }
+          set((s) => ({
+            daily: { ...s.daily, [key]: next },
+            projects: patchD.eodAt ? finalizeFor(s.projects, personId, date, patchD.eodAt, { ...s.daily, [key]: next }) : s.projects,
+          }));
+        },
+        finalizeDay: (pid, date = day(0)) => {
+          const at = iso();
+          if (pid) {
+            owns(pid);
+            proj(pid, (x) => ({ ...x, finalized: { ...x.finalized, [date]: x.finalized?.[date] ?? at } }));
+            return;
+          }
+          set((s) => ({ projects: finalizeFor(s.projects, s.me, date, at) }));
         },
         setMetricPeriods: (pid, mid, periods) => {
           owns(pid);
@@ -368,20 +788,25 @@ export const useStore = create<Data & Actions>()(
           const me = get().me;
           if (!p.name.trim()) throw new Error('Give the project a name.');
           if (!p.startDate || !p.endDate || p.endDate < p.startDate) throw new Error('End date must be after the start date.');
-          const hours = { ...p.hours };
+          if (p.standards && Object.values(p.standards).some((v) => !(v > 0))) throw new Error('Standard times must be above zero.');
+          const hours = cleanHours(p.hours);
+          const customStandards = cleanCustomStandards(p.customStandards ?? []);
           const teamIds = Object.keys(hours).filter((k) => hours[k] > 0);
           if (!teamIds.includes(me)) teamIds.push(me);
+          const admins = [...new Set((p.admins ?? []).filter((a) => a !== me && PEOPLE.some((x) => x.id === a)))];
+          const weekPlans = Object.fromEntries(Object.entries(p.weekPlans ?? {}).map(([ws, c]) => [weekStartOf(ws), cleanCounts(c)]));
           const lead = isLeadRole(roleOf(me));
           const id = uid();
           set((s) => ({
             projects: [...s.projects, {
-              id, name: p.name.trim(), client: p.client.trim() || p.name.trim(), description: p.description.trim(), pmId: me,
-              status: lead ? 'active' : 'pending', teamIds, startDate: p.startDate, endDate: p.endDate, hours, standards: p.standards,
-              metrics: METRICS.map((m) => ({ ...m })), weekTarget: { ...ZERO }, monthTarget: { ...ZERO }, weekLocked: false, monthLocked: false,
-              week: { ...ZERO }, month: { ...ZERO }, meetings: [], pastWeeks: [], pastMonths: [], updates: [],
+              id, name: p.name.trim(), client: p.client.trim() || p.name.trim(), description: p.description.trim(), pmId: me, admins,
+              status: lead ? 'active' : 'pending', teamIds, startDate: p.startDate, endDate: p.endDate, hours, standards: p.standards, customStandards,
+              metrics: METRICS.map((m) => ({ ...m })), weekTarget: p.weekTarget ? cleanCounts(p.weekTarget) : { ...ZERO }, monthTarget: { ...ZERO }, weekPlans,
+              weekLocked: false, monthLocked: false, week: { ...ZERO }, month: { ...ZERO }, meetings: [], pastWeeks: [], pastMonths: [], updates: [], finalized: {},
             }],
           }));
-          if (!lead) PEOPLE.filter((x) => isLeadRole(x.role)).forEach((x) => notify(x.id, `${first(me)} proposed a new project: ${p.name.trim()} — waiting for approval`, 'project'));
+          if (!lead) leads().forEach((x) => notify(x, `${first(me)} proposed a new project: ${p.name.trim()}, waiting for approval`, 'project'));
+          if (lead) admins.forEach((a) => notify(a, `${first(me)} made you an admin of ${p.name.trim()}`, 'project'));
           return id;
         },
         decideProject: (id, approve) => {
@@ -389,12 +814,104 @@ export const useStore = create<Data & Actions>()(
           if (!p) throw new Error('Project not found.');
           if (approve) {
             proj(id, (x) => ({ ...x, status: 'active' }));
-            notify(p.pmId, `${first(get().me)} approved ${p.name} — you can now assign tasks 🎉`, 'project');
+            notify(p.pmId, `${first(get().me)} approved ${p.name}, you can now assign tasks 🎉`, 'project');
             p.teamIds.filter((m) => m !== p.pmId).forEach((m) => notify(m, `You've been added to ${p.name} for ${p.hours[m] ?? 0}h a day`, 'project'));
+            (p.admins ?? []).forEach((a) => notify(a, `You are an admin of ${p.name}`, 'project'));
           } else {
             set((s) => ({ projects: s.projects.filter((x) => x.id !== id) }));
             notify(p.pmId, `${first(get().me)} didn't approve ${p.name} this time`, 'project');
           }
+        },
+        setProjectAdmins: (pid, ids) => {
+          const p = ownerOnly(pid);
+          const next = [...new Set(ids)].filter((x) => x !== p.pmId);
+          if (next.some((x) => !PEOPLE.some((q) => q.id === x))) throw new Error('Pick people from the team list.');
+          const added = next.filter((x) => !p.admins.includes(x));
+          const removed = p.admins.filter((x) => !next.includes(x));
+          proj(pid, (x) => ({ ...x, admins: next }));
+          added.forEach((x) => notify(x, `${first(get().me)} made you an admin of ${p.name}. You can now set targets, numbers and assign tasks.`, 'project'));
+          removed.forEach((x) => notify(x, `${first(get().me)} removed your admin access on ${p.name}`, 'project'));
+        },
+        addProjectAdmin: (pid, personId) => {
+          const p = ownerOnly(pid);
+          if (!PEOPLE.some((q) => q.id === personId)) throw new Error('Pick someone to add as admin.');
+          if (personId === p.pmId) throw new Error(`${first(personId)} owns this project already.`);
+          if (p.admins.includes(personId)) throw new Error(`${first(personId)} is already an admin.`);
+          proj(pid, (x) => ({ ...x, admins: [...x.admins, personId] }));
+          notify(personId, `${first(get().me)} made you an admin of ${p.name}. You can now set targets, numbers and assign tasks.`, 'project');
+        },
+        removeProjectAdmin: (pid, personId) => {
+          const p = findProject(pid);
+          // The owner (or management) can remove anyone; an admin can step down themselves.
+          if (personId !== get().me) ownerOnly(pid);
+          if (!p.admins.includes(personId)) throw new Error(`${first(personId)} is not an admin.`);
+          proj(pid, (x) => ({ ...x, admins: x.admins.filter((a) => a !== personId) }));
+          if (personId !== get().me) notify(personId, `${first(get().me)} removed your admin access on ${p.name}`, 'project');
+          else if (p.pmId !== get().me) notify(p.pmId, `${first(get().me)} stepped down as admin of ${p.name}`, 'project');
+        },
+        transferProject: (pid, toId, mode) => {
+          const p = ownerOnly(pid);
+          const me = get().me;
+          if (!PEOPLE.some((q) => q.id === toId)) throw new Error('Pick who to hand the project over to.');
+          if (toId === p.pmId) throw new Error(`${first(toId)} already owns this project.`);
+          const prevOwner = p.pmId;
+          proj(pid, (x) => {
+            let admins = x.admins.filter((a) => a !== toId);
+            let teamIds = [...new Set([...x.teamIds, toId])];
+            const hours = { ...x.hours };
+            if (mode === 'remove-me') {
+              admins = admins.filter((a) => a !== prevOwner);
+              teamIds = teamIds.filter((id) => id !== prevOwner);
+              delete hours[prevOwner];
+            } else if (mode === 'stay-admin') {
+              admins = [...new Set([...admins, prevOwner])];
+              if (!teamIds.includes(prevOwner)) teamIds.push(prevOwner);
+            } else {
+              admins = admins.filter((a) => a !== prevOwner);
+              if (!teamIds.includes(prevOwner)) teamIds.push(prevOwner);
+            }
+            const how = mode === 'remove-me' ? 'and left the project' : mode === 'stay-admin' ? 'and stays on as admin' : 'and stays on as a team member';
+            return {
+              ...x, pmId: toId, admins, teamIds, hours,
+              updates: [{ id: uid(), text: `${first(prevOwner)} handed the project over to ${first(toId)} ${how}.`, at: iso(), by: me }, ...x.updates],
+            };
+          });
+          notify(toId, `${first(me)} handed ${p.name} over to you. You are now the owner 🎉`, 'project');
+          if (prevOwner !== me) notify(prevOwner, `${first(me)} handed ${p.name} over to ${first(toId)}`, 'project');
+          leads().filter((id) => id !== me && id !== toId).forEach((id) => notify(id, `${first(prevOwner)} handed ${p.name} over to ${first(toId)}`, 'project'));
+        },
+        setWeekPlan: (pid, ws, metric, value) => {
+          owns(pid);
+          const mon = weekStartOf(ws);
+          const v = Number(value);
+          if (!Number.isFinite(v) || v < 0) throw new Error('Targets must be zero or more.');
+          proj(pid, (x) => ({ ...x, weekPlans: { ...x.weekPlans, [mon]: { ...(x.weekPlans?.[mon] ?? x.weekTarget), [metric]: Math.round(v) } } }));
+        },
+        saveWeekPlan: (pid, ws, counts) => {
+          owns(pid);
+          const mon = weekStartOf(ws);
+          const clean = cleanCounts(counts);
+          proj(pid, (x) => ({ ...x, weekPlans: { ...x.weekPlans, [mon]: clean } }));
+        },
+        clearWeekPlan: (pid, ws) => {
+          owns(pid);
+          const mon = weekStartOf(ws);
+          proj(pid, (x) => {
+            const weekPlans = { ...x.weekPlans };
+            delete weekPlans[mon];
+            return { ...x, weekPlans };
+          });
+        },
+        addCustomStandard: (pid, s) => {
+          const p = owns(pid);
+          const [made] = cleanCustomStandards([s]);
+          if (p.customStandards.some((x) => x.name.toLowerCase() === made.name.toLowerCase())) throw new Error(`"${made.name}" already has a standard time.`);
+          proj(pid, (x) => ({ ...x, customStandards: [...x.customStandards, made] }));
+          return made.id;
+        },
+        removeCustomStandard: (pid, id) => {
+          owns(pid);
+          proj(pid, (x) => ({ ...x, customStandards: x.customStandards.filter((c) => c.id !== id) }));
         },
         readAll: () => set((s) => ({ notices: s.notices.map((n) => (n.to === s.me ? { ...n, read: true } : n)) })),
         readNotice: (id) => set((s) => ({ notices: s.notices.map((n) => (n.id === id ? { ...n, read: true } : n)) })),
@@ -417,13 +934,14 @@ export const useStore = create<Data & Actions>()(
     },
     {
       name: 'ls-tracker-v2',
-      version: 9,
+      version: 10,
       // Old or unreadable saved data falls back to a fresh demo instead of crashing.
       migrate: () => seed() as never,
       merge: (persisted, current) => {
         const p = persisted as Partial<Data> | undefined;
         if (!p || !Array.isArray(p.tasks) || !Array.isArray(p.projects)) return current;
-        return { ...current, ...p };
+        if (p.projects.some((x) => !Array.isArray(x.admins) || !x.finalized) || p.tasks.some((t) => !Array.isArray(t.history))) return current;
+        return { ...current, ...p, projects: p.projects.map(rollPeriods) };
       },
     },
   ),
@@ -462,11 +980,7 @@ export type PeriodKey = { kind: 'week' | 'month'; key: string }; // key = week s
 
 /** Start date (inclusive) and end date (exclusive) for a period. */
 function periodRange(p: PeriodKey): [string, string] {
-  if (p.kind === 'week') {
-    const d = new Date(p.key + 'T00:00');
-    d.setDate(d.getDate() + 7);
-    return [p.key, d.toISOString().slice(0, 10)];
-  }
+  if (p.kind === 'week') return [p.key, addDays(p.key, 7)];
   const [y, m] = p.key.split('-').map(Number);
   return [`${p.key}-01`, m === 12 ? `${y + 1}-01-01` : `${y}-${String(m + 1).padStart(2, '0')}-01`];
 }
@@ -476,7 +990,7 @@ function periodRange(p: PeriodKey): [string, string] {
  * + what submitted daily tasks produced + end-of-day updates; for closed periods = history.
  */
 export function projectCounts(p: Project, tasks: Task[], daily: Record<string, DailyUpdate>, period: PeriodKey): { counts: Record<string, number>; auto: Record<string, number> } {
-  const thisWeek = weekStartISO();
+  const thisWeek = weekStart(0);
   const thisMonth = day(0).slice(0, 7);
   if (period.kind === 'week' && period.key !== thisWeek) return { counts: p.pastWeeks.find((w) => w.start === period.key)?.counts ?? {}, auto: {} };
   if (period.kind === 'month' && period.key !== thisMonth) return { counts: p.pastMonths.find((w) => w.month === period.key)?.counts ?? {}, auto: {} };
@@ -493,164 +1007,6 @@ export function projectCounts(p: Project, tasks: Task[], daily: Record<string, D
   const counts: Record<string, number> = { ...base };
   Object.entries(auto).forEach(([k, v]) => { counts[k] = (counts[k] ?? 0) + v; });
   return { counts, auto };
-}
-
-function weekStartISO(): string {
-  const d = new Date();
-  d.setDate(d.getDate() - ((d.getDay() + 6) % 7));
-  return d.toISOString().slice(0, 10);
-}
-
-/** A starter day plan built from the hours each project gets, beginning at 10:00. */
-export function defaultPlan(projects: Project[], personId: string): DayBlock[] {
-  // Fill 10:00–13:00 then 14:00–19:00 with each project's hours, splitting around lunch.
-  const out: DayBlock[] = [];
-  const slots = [[10, 13], [14, 19]];
-  let si = 0;
-  let h = 10;
-  const hh = (n: number) => `${String(n).padStart(2, '0')}:00`;
-  for (const p of projects.filter((x) => x.status === 'active' && (x.hours[personId] ?? 0) > 0)) {
-    let left = p.hours[personId];
-    while (left > 0 && si < slots.length) {
-      const end = Math.min(slots[si][1], h + left);
-      out.push({ id: uid(), start: hh(h), end: hh(end), projectId: p.id, taskIds: [] });
-      left -= end - h;
-      h = end;
-      if (h >= slots[si][1]) { si++; if (si < slots.length) h = slots[si][0]; }
-    }
-  }
-  return out;
-}
-
-
-/** Morning targets + evening reports for the last two weeks, for everyone on the team. */
-function historyDaily(projects: Project[]): Record<string, DailyUpdate> {
-  const NOTES_AM = ['Clear the follow-ups first, then fresh L1s.', 'Prospect list for the new ICP, then messages.', 'Calls in the morning, emails after lunch.', 'Finish yesterday\'s carry-over, then the new batch.', 'Deck review first, outreach after.'];
-  const NOTES_PM = ['Good day — two warm replies.', 'Hit the message target, calls were quiet.', 'CRM was slow but caught up by 6.', 'One meeting interest from a VP Sales.', 'Carry-over: 10 follow-ups for tomorrow.'];
-  let seed = 11;
-  const rnd = () => ((seed = (seed * 9301 + 49297) % 233280) / 233280);
-  const out: Record<string, DailyUpdate> = {};
-  pastWorkingDays(10).forEach((date) => {
-    Object.entries(WORK).forEach(([who, pids]) => {
-      if (rnd() < 0.08) return; // the odd day someone forgot
-      const plan = defaultPlan(projects, who);
-      if (rnd() < 0.3 && plan.length) {
-        const last = plan[plan.length - 1];
-        if (last.end > '17:00') {
-          last.end = '17:00';
-          plan.push({ id: uid(), start: '17:00', end: '19:00', projectId: '', taskIds: [], custom: { title: ['Urgent client call prep', 'Ad-hoc list cleanup', 'Proposal revision'][Math.floor(rnd() * 3)], priority: true, targetQty: 5, unit: 'items', achieved: 4 + Math.floor(rnd() * 2) } });
-        }
-      }
-      const sodTargets: ProjectNumbers = {};
-      const eodActuals: ProjectNumbers = {};
-      pids.forEach((pid) => {
-        const resp = 2 + Math.floor(rnd() * 4);
-        sodTargets[pid] = { responses: resp, interest: 1 };
-        eodActuals[pid] = { responses: Math.max(0, resp + Math.floor(rnd() * 4) - 2), interest: Math.floor(rnd() * 3) };
-      });
-      out[`${who}|${date}`] = {
-        ...emptyDaily(), plan, sodTargets, eodActuals,
-        sodNote: NOTES_AM[Math.floor(rnd() * NOTES_AM.length)], eodNote: NOTES_PM[Math.floor(rnd() * NOTES_PM.length)],
-        sodAt: new Date(`${date}T10:${String(Math.floor(rnd() * 20)).padStart(2, '0')}:00`).toISOString(),
-        eodAt: rnd() < 0.9 ? new Date(`${date}T18:${String(30 + Math.floor(rnd() * 29)).padStart(2, '0')}:00`).toISOString() : undefined,
-      };
-    });
-  });
-  return out;
-}
-
-function seedWeekly(): Record<string, WeeklyUpdate> {
-  const ws = weekStartISO();
-  const last = new Date(ws + 'T00:00');
-  last.setDate(last.getDate() - 7);
-  const lw = `${last.getFullYear()}-${String(last.getMonth() + 1).padStart(2, '0')}-${String(last.getDate()).padStart(2, '0')}`;
-  const T = (label: string, qty: number) => ({ id: `w${label}${qty}`, label, qty });
-  const out: Record<string, WeeklyUpdate> = {};
-  const goals: Record<string, [string, string, [string, number][], [string, number][]]> = {
-    udhaya: ['300 personalised L1s across Northwind + Helios, BD prospect list.', 'Hit L1s, prospect list 80% done.', [['Meetings interest', 3], ['Case studies', 1]], [['Meetings interest', 4], ['Case studies', 1]]],
-    bharath: ['150 calls, 10 interested leads.', '142 calls, 11 interested — two demos booked.', [['Calls', 150], ['Interested leads', 10]], [['Calls', 142], ['Interested leads', 11]]],
-    sachi: ['Helios deck v3 + 200 L2 follow-ups.', 'Deck shipped, 180 L2s.', [['L2 follow-ups', 200], ['Deck versions', 1]], [['L2 follow-ups', 180], ['Deck versions', 1]]],
-    bheeshma: ['Book 4 Northwind meetings, clear review queue daily.', '4 meetings booked ✓', [['Meetings booked', 4]], [['Meetings booked', 4]]],
-    alok: ['Helios: 3 meetings, new CFO sequence live.', '2 meetings, sequence live.', [['Meetings booked', 3]], [['Meetings booked', 2]]],
-    abisho: ['BD: 20 agency founders contacted.', '24 contacted, 3 replies.', [['Founders contacted', 20]], [['Founders contacted', 24]]],
-    prajwal: ['Support Northwind + Helios, 200 emails.', '210 emails sent.', [['Emails', 200]], [['Emails', 210]]],
-  };
-  Object.entries(goals).forEach(([who, [tn, en, tc, ec]]) => {
-    out[`${who}|${lw}`] = { targetsNote: tn, targetsCustom: tc.map(([l, q]) => T(l, q)), targetsAt: new Date(lw + 'T10:15:00').toISOString(), eowNote: en, eowCustom: ec.map(([l, q]) => T(l, q)), eowAt: new Date(lw + 'T18:40:00').toISOString() };
-    if (who !== 'prajwal') out[`${who}|${ws}`] = { ...emptyWeekly(), targetsNote: tn, targetsCustom: tc.map(([l, q]) => T(l, q)), targetsAt: new Date(ws + 'T10:20:00').toISOString() };
-  });
-  return out;
-}
-
-/** Today's morning targets (and a few end-of-day reports) for the whole team. */
-function seedToday(): Record<string, DailyUpdate> {
-  const at = (h: number, m: number) => new Date(new Date().setHours(h, m, 0, 0)).toISOString();
-  const d = day(0);
-  return {
-    [`alok|${d}`]: { ...emptyDaily(), sodNote: 'Helios CFO sequence: L2 follow-ups + 2 calls.', sodTargets: { helios: { responses: 5, interest: 2 } }, sodCustom: [{ id: 'a1', label: 'CFO list review', qty: 1 }], sodAt: at(10, 7), eodNote: 'Good replies on L2s, one CFO wants a deck.', eodActuals: { helios: { responses: 6, interest: 1 } }, eodCustom: [{ id: 'a2', label: 'CFO list review', qty: 1 }], eodAt: at(18, 35) },
-    [`abisho|${d}`]: { ...emptyDaily(), sodNote: 'BD outreach to 15 agency founders.', sodTargets: { bd: { responses: 3, interest: 1, calls: 6 } }, sodAt: at(10, 2) },
-    [`prajwal|${d}`]: { ...emptyDaily(), sodNote: 'Emails for Northwind, WhatsApp batch for Helios.', sodTargets: { northwind: { responses: 3 }, helios: { responses: 2 } }, sodAt: at(10, 18), eodNote: 'Emails done; WhatsApp batch half — rest tomorrow.', eodActuals: { northwind: { responses: 4 }, helios: { responses: 1 } }, eodCustom: [{ id: 'p1', label: 'Helped Sachi with deck data', qty: 1 }], eodAt: at(18, 50) },
-  };
-}
-
-function seedDaily(): Record<string, DailyUpdate> {
-  const y = day(-1);
-  const at = (h: number, m: number) => new Date(new Date().setHours(h, m, 0, 0)).toISOString();
-  const history = historyDaily(seedProjects());
-  return {
-    ...history,
-    ...seedToday(),
-    [`udhaya|${day(0)}`]: {
-      ...emptyDaily(),
-      plan: [
-        { id: 'b1', start: '10:00', end: '13:00', projectId: 'northwind', taskIds: [] },
-        { id: 'b2', start: '14:00', end: '16:00', projectId: 'helios', taskIds: ['t13', 't14'] },
-        { id: 'b3', start: '16:00', end: '18:00', projectId: 'bd', taskIds: ['t15'] },
-      ],
-      sodNote: 'Finish the QBR deck first, then personalised L1s.',
-      sodCustom: [{ id: 'sc1', label: 'Case-study one-pager for Northwind', qty: 1 }],
-      sodTargets: { northwind: { messages: 60 } },
-      sodAt: new Date(new Date().setHours(10, 5, 0, 0)).toISOString(),
-    },
-    [`bharath|${day(0)}`]: {
-      ...emptyDaily(),
-      plan: [{ id: 'b4', start: '10:00', end: '13:00', projectId: 'northwind', taskIds: [] }, { id: 'b4b', start: '14:00', end: '19:00', projectId: 'northwind', taskIds: [] }],
-      sodNote: 'Telecalling block in the morning, emails after lunch.',
-      sodTargets: { northwind: { calls: 25, responses: 4 } },
-      sodAt: at(10, 12),
-      eodNote: 'Great call day — 2 people asked for a demo next week.',
-      eodActuals: { northwind: { calls: 28, responses: 5, interest: 2 } },
-      eodAt: at(18, 40),
-    },
-    [`sachi|${day(0)}`]: {
-      ...emptyDaily(),
-      plan: [
-        { id: 'b5', start: '10:00', end: '12:00', projectId: 'helios', taskIds: [], custom: { title: 'Helios pitch deck fixes for CFO call', priority: true, targetQty: 8, unit: 'slides', projectId: 'helios' } },
-        { id: 'b6', start: '12:00', end: '13:00', projectId: 'helios', taskIds: [] },
-        { id: 'b6b', start: '14:00', end: '19:00', projectId: 'helios', taskIds: [] },
-      ],
-      sodNote: 'Deck fixes first (urgent), then L2 follow-ups.',
-      sodTargets: { helios: { messages: 80, responses: 6 } },
-      sodAt: at(10, 3),
-    },
-    [`bheeshma|${day(0)}`]: {
-      ...emptyDaily(),
-      sodNote: 'Review the team queue by noon, client call at 3.',
-      sodTargets: { northwind: { meetings: 1, interest: 2 } },
-      sodAt: at(10, 20),
-      eodNote: 'Approved 4 reviews, booked Acme Cloud for tomorrow.',
-      eodActuals: { northwind: { meetings: 1, interest: 3 } },
-      eodAt: at(18, 55),
-    },
-    [`udhaya|${y}`]: {
-      ...(history[`udhaya|${y}`] ?? {}),
-      ...emptyDaily(),
-      sodNote: 'Follow-ups and WhatsApp batch.',
-      eodNote: 'Follow-ups 20/25 done, rest carried to today. Two positive replies.',
-      eodActuals: { northwind: { responses: 2 } },
-      eodAt: new Date(Date.now() - 86400000).toISOString(),
-    },
-  };
 }
 
 export { targetFor };

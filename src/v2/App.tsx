@@ -2,7 +2,7 @@ import { Component, useEffect, useRef, useState, type ReactNode } from 'react';
 import { HashRouter, NavLink, Navigate, Route, Routes, useNavigate } from 'react-router-dom';
 import { Bell, ClipboardList, FolderKanban, LayoutDashboard, MessageCircle, RotateCcw, NotebookPen, Palette, Settings, UserCircle, Users } from 'lucide-react';
 import { Toaster, toast } from '@/components';
-import { isLeadRole, PEOPLE, PERSONAS } from './data';
+import { canManage, isLeadRole, PEOPLE, PERSONAS } from './data';
 import { nameOf, push, useStore } from './store';
 import { FunLayer, Mascot, ThemeApplier, ThemeMenu } from './theme';
 import { Avatar, Btn, Card, cx } from './ui';
@@ -59,8 +59,8 @@ function Shell() {
   const [themeOpen, setThemeOpen] = useState(false);
 
   const lead = isLeadRole(person.role);
-  // Resources and PMs share one view; Assign appears once they own an approved project.
-  const ownsProject = projects.some((p) => p.pmId === me && p.status === 'active');
+  // Resources and PMs share one view; Assign appears once they own or help run (admin) an approved project.
+  const ownsProject = projects.some((p) => canManage(p, me) && p.status === 'active');
   const navItems: NavItem[] = [...(lead ? [DASH, PROJECTS, ASSIGN, PEOPLE_NAV] : ownsProject ? [DASH, PROJECTS, ASSIGN] : [DASH, PROJECTS]), PROFILE];
   const rail = [
     { to: '/daily', label: 'Tasks update', icon: NotebookPen, badge: 0 },
@@ -93,12 +93,12 @@ function Shell() {
       </nav>
 
       <div className="relative z-[1] min-w-0 flex-1">
-        <header className="sticky top-0 z-10 flex items-center justify-between gap-3 border-b border-line bg-surface/90 px-6 py-3 backdrop-blur">
+        <header className="sticky top-0 z-10 flex items-center justify-between gap-3 border-b border-line bg-surface/90 px-4 py-3 backdrop-blur sm:px-6">
           <div className="flex items-center gap-2"><p className="text-sm font-extrabold tracking-tight">Lead Strategus</p><span className="hidden text-xs text-muted sm:inline">Tracker</span></div>
-          <label className="flex items-center gap-2 rounded-full bg-surface-2 py-1 pl-1 pr-2 text-xs">
+          <label className="flex min-w-0 items-center gap-2 rounded-full bg-surface-2 py-1 pl-1 pr-2 text-xs">
             <Avatar id={me} size="sm" />
-            <span className="text-muted">Viewing as</span>
-            <select aria-label="Viewing as" className="focus-ring rounded-full bg-surface px-2 py-1 font-semibold" value={me} onChange={(e) => { setMe(e.target.value); nav('/'); }}>
+            <span className="hidden text-muted sm:inline">Viewing as</span>
+            <select aria-label="Viewing as" className="focus-ring min-w-0 max-w-[11rem] rounded-full bg-surface px-2 py-1 font-semibold sm:max-w-none" value={me} onChange={(e) => { setMe(e.target.value); nav('/'); }}>
               {(['pm', 'resource', 'manager', 'founder'] as const).map((r) => (
                 <optgroup key={r} label={r === 'pm' ? 'Project managers' : r === 'resource' ? 'Resources' : r === 'manager' ? 'Manager' : 'Founders'}>
                   {PERSONAS.filter((id) => PEOPLE.find((x) => x.id === id)?.role === r).map((id) => (
@@ -109,7 +109,7 @@ function Shell() {
             </select>
           </label>
         </header>
-        <main className="mx-auto max-w-6xl p-6">
+        <main className="mx-auto max-w-6xl p-4 sm:p-6">
           <Routes>
             <Route path="/" element={lead ? <LeadDashboard /> : <TeamDashboard />} />
             <Route path="/projects" element={lead ? <LeadProjects /> : <Projects />} />
@@ -121,7 +121,7 @@ function Shell() {
           </Routes>
         </main>
       </div>
-      {/* Floating chat: stays on screen across pages, minimise with – */}
+      {/* Floating chat: stays on screen across pages, minimise with the minus button */}
       <div className="fixed bottom-5 right-5 z-40 flex flex-col items-end gap-3">
         {chatOpen && <div aria-hidden className="fixed inset-0 -z-10" onClick={() => setChatOpen(false)} />}
         {chatOpen && (

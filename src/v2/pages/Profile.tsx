@@ -1,12 +1,14 @@
 import { useMemo, useRef, useState } from 'react';
 import { Camera, Moon, Sun, Trash2 } from 'lucide-react';
-import { CartesianGrid, Line, LineChart, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { toast } from '@/components';
-import { useChartColors } from '@/theme/useChartColors';
-import { dailyHistory, PEOPLE } from '../data';
+import { personSeries, personSeriesAll, shiftPeriod, teamTable, type Gran, type Kpi } from '../analytics';
+import { isLeadRole, PEOPLE } from '../data';
 import { first, nameOf, useStore } from '../store';
 import { Avatar, Btn, Card, Chip, H2, ago, cx, input } from '../ui';
 import { TaskCalendar } from './Widgets';
+import { AssignmentMix, KpiTrend, WhereTimeGoes } from './analytics/charts';
+import { GranToggle, KpiPicker, KpiTiles, PeriodSelect, TRACK_TITLE, periodNoun, seriesLength, useEarliest, usePeriodOptions, useSlice } from './analytics/controls';
+import { TaskHistorySummary, TrackTable, useEodOf } from './analytics/history';
 
 const BADGES = ['🚀', '⭐', '🔥', '🎯', '💡', '🌱', '☕', '🎧', '🏆', '🦉'];
 const ACCENTS = [
@@ -17,17 +19,12 @@ const ACCENTS = [
   { id: 'peach', label: 'Peach', swatch: '#B04E24' },
   { id: 'butter', label: 'Butter', swatch: '#856300' },
 ];
-const RANGES = [
-  { id: 1, label: 'Last day' },
-  { id: 5, label: 'Last week' },
-  { id: 22, label: 'Last month' },
-] as const;
 
 /** Shrink an uploaded photo so it fits comfortably in local storage. */
 function resize(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     if (!file.type.startsWith('image/')) return reject(new Error('Please choose an image file.'));
-    if (file.size > 8 * 1024 * 1024) return reject(new Error('That image is over 8 MB — try a smaller one.'));
+    if (file.size > 8 * 1024 * 1024) return reject(new Error('That image is over 8 MB, please try a smaller one.'));
     const img = new Image();
     img.onload = () => {
       const size = 160;
@@ -50,13 +47,8 @@ export default function Profile() {
   const person = PEOPLE.find((p) => p.id === me)!;
   const prof = profiles[me] ?? {};
   const [name, setName] = useState(prof.name ?? person.name);
-  const [range, setRange] = useState<number>(5);
   const fileRef = useRef<HTMLInputElement>(null);
-  const colors = useChartColors();
-
-  const days = useMemo(() => dailyHistory(person, 30), [person]);
-  const shown = days.slice(-range);
-  const avg = (k: 'onTime' | 'tasks' | 'hours') => (shown.length ? Math.round((shown.reduce((s, d) => s + d[k], 0) / shown.length) * 10) / 10 : 0);
+  const lead = isLeadRole(person.role);
   const mine = tasks.filter((t) => t.assigneeId === me).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   const reviewed = tasks.flatMap((t) => t.reviews.filter((r) => r.by === me).map((r) => ({ t, r }))).sort((a, b) => b.r.at.localeCompare(a.r.at));
   const assigned = tasks.filter((t) => t.assignedById === me);
@@ -123,61 +115,27 @@ export default function Profile() {
               </button>
             ))}
           </div>
-          <p className="mt-3 text-xs text-muted">Saved for {first(me)} only — everyone can pick their own.</p>
+          <p className="mt-3 text-xs text-muted">Saved for {first(me)} only. Everyone can pick their own.</p>
         </Card>
       </div>
 
-      <Card>
-        <H2 right={
-          <div className="flex rounded-full bg-surface-2 p-0.5" role="radiogroup" aria-label="Range">
-            {RANGES.map((r) => (
-              <button key={r.id} role="radio" aria-checked={range === r.id} onClick={() => setRange(r.id)} className={cx('focus-ring rounded-full px-3 py-1 text-xs font-semibold', range === r.id ? 'bg-accent text-accent-on' : 'text-muted')}>{r.label}</button>
-            ))}
-          </div>
-        }>My performance</H2>
-        {days.length ? (
-          <>
-            <div className="grid grid-cols-3 gap-3 text-center">
-              {[['Tasks on time', `${avg('onTime')}%`], ['Tasks done / day', avg('tasks')], ['Hours / day', `${avg('hours')}h`]].map(([l, v]) => (
-                <div key={l as string} className="rounded-2xl bg-surface-2 p-3"><p className="text-2xl font-bold">{v}</p><p className="text-xs text-muted">{l}</p></div>
-              ))}
-            </div>
-            {range > 1 && (
-              <div className="mt-4 h-52">
-                <ResponsiveContainer>
-                  <LineChart data={shown.map((d) => ({ d: d.date.slice(5), v: d.onTime }))} margin={{ top: 8, right: 12, left: -16, bottom: 0 }}>
-                    <CartesianGrid stroke={colors.line} vertical={false} />
-                    <XAxis dataKey="d" stroke={colors.muted} fontSize={12} />
-                    <YAxis domain={[0, 100]} stroke={colors.muted} fontSize={12} unit="%" />
-                    <Tooltip formatter={(v) => [`${v}%`, 'On time']} />
-                    <ReferenceLine y={80} stroke={colors.muted} strokeDasharray="4 4" />
-                    <Line type="monotone" dataKey="v" stroke={colors.accent} strokeWidth={3} dot={{ r: 3 }} />
-                  </LineChart>
-                </ResponsiveContainer>
-              </div>
-            )}
-            <div className="mt-4 max-h-56 overflow-y-auto rounded-xl border border-line">
-              <table className="w-full text-sm">
-                <thead className="sticky top-0 bg-surface-2 text-left text-xs uppercase text-muted"><tr><th className="px-3 py-2">Date</th><th>On time</th><th>Tasks done</th><th>Hours</th></tr></thead>
-                <tbody>
-                  {[...shown].reverse().map((d) => (
-                    <tr key={d.date} className="border-t border-line">
-                      <td className="px-3 py-1.5">{new Date(d.date + 'T00:00').toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' })}</td>
-                      <td className={cx('font-semibold', d.onTime >= 80 ? 'text-mint-ink' : 'text-butter-ink')}>{d.onTime}%</td>
-                      <td>{d.tasks}</td><td>{d.hours}h</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </>
-        ) : (
+      {lead ? (
+        <Card>
+          <H2>My activity</H2>
           <div className="grid grid-cols-2 gap-3 text-center">
             <div className="rounded-2xl bg-surface-2 p-3"><p className="text-2xl font-bold">{reviewed.length}</p><p className="text-xs text-muted">Reviews completed</p></div>
             <div className="rounded-2xl bg-surface-2 p-3"><p className="text-2xl font-bold">{assigned.length}</p><p className="text-xs text-muted">Tasks assigned</p></div>
           </div>
-        )}
-      </Card>
+          {assigned.length > 0 && (
+            <div className="mt-5">
+              <p className="mb-2 text-xs font-bold uppercase tracking-wide text-muted">How I assign vs standard time (all tasks)</p>
+              <AssignmentMix from="0000-01-01" to="9999-12-31" assignedBy={me} />
+            </div>
+          )}
+        </Card>
+      ) : (
+        <MyProgress me={me} />
+      )}
 
       <div className="grid gap-6 lg:grid-cols-2">
         <Card className="lg:col-span-2">
@@ -200,5 +158,65 @@ export default function Profile() {
         </Card>
       </div>
     </div>
+  );
+}
+
+/** My daily / weekly / monthly progress: KPI tiles vs the previous period, the line graph, my track, where my time goes and my task history. */
+function MyProgress({ me }: { me: string }) {
+  const slice = useSlice();
+  const earliest = useEarliest();
+  const [gran, setGran] = useState<Gran>('day');
+  const [kpi, setKpi] = useState<Kpi>('onTime');
+  const [idx, setIdx] = useState(0);
+  const options = usePeriodOptions(gran, earliest);
+  const i = Math.min(idx, options.length - 1);
+  const period = options[i].period;
+  const prev = shiftPeriod(period, -1);
+  const monthsAvail = usePeriodOptions('month', earliest).length;
+  const n = seriesLength(gran, monthsAvail);
+  const row = useMemo(() => teamTable(slice, gran, period.key, { people: [me] })[0], [slice, gran, period.key, me]);
+  const points = useMemo(() => personSeries(slice, me, gran, kpi, n), [slice, me, gran, kpi, n]);
+  const track = useMemo(() => personSeriesAll(slice, me, gran, n), [slice, me, gran, n]);
+  const eodOf = useEodOf(me);
+  const assignedHere = slice.tasks.some((t) => t.assignedById === me && t.date >= period.from && t.date <= period.to);
+  const noun = periodNoun(gran);
+
+  return (
+    <>
+      <Card>
+        <div data-testid="my-progress">
+          <H2 right={<GranToggle value={gran} onChange={setGran} />}>My progress</H2>
+          <div className="mb-4 flex flex-wrap items-center gap-2">
+            <KpiPicker value={kpi} onChange={setKpi} />
+            <span className="ml-auto"><PeriodSelect options={options} index={i} onChange={setIdx} /></span>
+          </div>
+          {row && <KpiTiles cur={row} prev={row.prev} selected={kpi} prevLabel={`Previous ${noun}: ${prev.title}`} onSelect={setKpi} />}
+          <p className="mt-2 text-xs text-muted">{period.title}{period.partial ? ' (so far)' : ''} compared with the previous {noun}, {prev.title}.</p>
+          <div className="mt-4">
+            <KpiTrend points={points} kpi={kpi} selectedKey={period.key} height={220} />
+            <p className="mt-1 text-[11px] text-muted">{kpi === 'onTime' ? 'Dashed line: 80% goal. ' : ''}Ringed dot: the selected {noun}. Hollow dot: still in progress.</p>
+          </div>
+          <p className="mb-2 mt-4 text-sm font-bold">{TRACK_TITLE[gran]}</p>
+          <TrackTable rows={track} gran={gran} selectedKey={period.key} eodOf={eodOf} maxHeight="max-h-56" />
+        </div>
+      </Card>
+
+      <Card>
+        <H2 right={<span className="text-xs text-muted">{period.title}</span>}>Where my time goes</H2>
+        <WhereTimeGoes personId={me} from={period.from} to={period.to} emptyText={`No time recorded for ${period.title} yet.`} />
+      </Card>
+
+      {assignedHere && (
+        <Card>
+          <H2 right={<span className="text-xs text-muted">Tasks I assigned for {period.title}</span>}>How I assign vs standard time</H2>
+          <AssignmentMix from={period.from} to={period.to} assignedBy={me} />
+        </Card>
+      )}
+
+      <Card>
+        <H2 right={<span className="text-xs text-muted">{period.title}</span>}>My task history</H2>
+        <TaskHistorySummary personId={me} from={period.from} to={period.to} periodTitle={period.title} />
+      </Card>
+    </>
   );
 }

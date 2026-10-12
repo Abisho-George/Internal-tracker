@@ -14,7 +14,7 @@ const QUOTES = [
 ];
 const JOKES = [
   'Why did the SDR bring a ladder? To reach the decision maker. 🪜',
-  'My CRM and I have a lot in common — we both need a refresh every morning. ☕',
+  'My CRM and I have a lot in common: we both need a refresh every morning. ☕',
   'I told my prospect a joke about follow-ups. They didn’t reply. So I told it again. And again. 📬',
   'What do you call a templated message that works? A personalised one, apparently. 🎭',
   'LinkedIn: where "Open to work" meets "Not open to your 5th follow-up". 😅',
@@ -45,7 +45,7 @@ export function Greeting({ extra }: { extra?: ReactNode }) {
         <span className={cx('flex h-8 w-8 shrink-0 items-center justify-center rounded-full', mode === 'quote' ? 'bg-accent-soft text-accent-ink' : 'bg-butter text-butter-ink')}>{mode === 'quote' ? <Quote size={15} /> : <Smile size={15} />}</span>
         <p className="min-w-0 flex-1 text-sm">
           <span className="block text-[10px] font-bold uppercase tracking-wider text-muted">{mode === 'quote' ? 'Quote of the day' : 'Joke of the day'}</span>
-          {mode === 'quote' ? <>“{q[0]}” <span className="text-muted">— {q[1]}</span></> : j}
+          {mode === 'quote' ? <>“{q[0]}” <span className="text-muted">- {q[1]}</span></> : j}
         </p>
         <div className="flex shrink-0 flex-col gap-1">
           <button className="focus-ring rounded-lg px-2 py-0.5 text-[11px] font-semibold text-accent-ink hover:bg-surface-2" onClick={toggle}>{mode === 'quote' ? 'Joke instead' : 'Quote instead'}</button>

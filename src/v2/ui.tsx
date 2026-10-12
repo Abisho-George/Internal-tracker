@@ -10,7 +10,7 @@ export function Card({ children, className }: { children: ReactNode; className?:
 
 export function H2({ children, right }: { children: ReactNode; right?: ReactNode }) {
   return (
-    <div className="mb-3 flex items-center justify-between gap-3">
+    <div className="mb-3 flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
       <h2 className="text-base font-bold">{children}</h2>
       {right}
     </div>
@@ -95,7 +95,7 @@ export function safe(fn: () => void, onError?: (msg: string) => void): boolean {
     fn();
     return true;
   } catch (e) {
-    const msg = e instanceof Error ? e.message : 'Something went wrong — please try again.';
+    const msg = e instanceof Error ? e.message : 'Something went wrong, please try again.';
     onError?.(msg);
     import('@/components').then(({ toast }) => toast({ title: msg, tone: 'info', emoji: '⚠️' }));
     return false;

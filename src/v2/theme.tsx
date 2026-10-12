@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Check, X } from 'lucide-react';
 import { Modal } from '@/components';
-import { day } from './data';
+import { day, isLeadRole, PEOPLE } from './data';
 import { DEFAULT_CUSTOM, first, useStore, type CustomTheme, type ThemeId } from './store';
 import { Btn, cx } from './ui';
 
@@ -43,7 +43,7 @@ export function useLook(): Look & { theme: ThemeId; custom: CustomTheme; mascot:
   const look: Look = theme === 'custom'
     ? { mode: custom.base, fun: 'custom', bg: custom.background, font: custom.font, cards: custom.cards, nowEmoji: custom.nowEmoji, blocks: custom.blocks, floaters: ['🎉', '✨', '🌈', '⭐', '💫'] }
     : base;
-  return { ...look, theme, custom, mascot: !!prof?.mascot, funExtras: prof?.fun ?? (theme !== 'pro' && theme !== 'dark') };
+  return { ...look, theme, custom, mascot: prof?.mascot ?? true, funExtras: prof?.fun ?? (theme !== 'pro' && theme !== 'dark') };
 }
 
 /** Writes the look onto <html> so the CSS can react. */
@@ -95,7 +95,7 @@ export function ThemeMenu({ open, onClose }: { open: boolean; onClose: () => voi
   const opt = (on: boolean) => cx('focus-ring rounded-xl border px-3 py-1.5 text-xs font-semibold', on ? 'border-accent bg-accent-soft text-accent-ink' : 'border-line text-muted');
 
   return (
-    <Modal open={open} onClose={onClose} title="Theme" description="Professional and Dark stay exactly as they are — the rest are just for fun." size="lg">
+    <Modal open={open} onClose={onClose} title="Theme" description="Professional and Dark stay exactly as they are. The rest are just for fun." size="lg">
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         {(Object.keys(PRESETS) as ThemeId[]).map((id) => {
           const p = PRESETS[id];
@@ -130,8 +130,8 @@ export function ThemeMenu({ open, onClose }: { open: boolean; onClose: () => voi
       <div className="mt-5 grid gap-3 sm:grid-cols-2">
         <label className="flex cursor-pointer items-center gap-3 rounded-2xl border border-line p-3">
           <img src="./mascot.webp" alt="" className="h-12 w-12 object-contain" />
-          <span className="flex-1"><b className="block text-sm">Mascot</b><span className="text-xs text-muted">Click him for (questionable) motivation</span></span>
-          <input type="checkbox" checked={look.mascot} onChange={(e) => setProfile(me, { mascot: e.target.checked })} className="h-5 w-5" />
+          <span className="flex-1"><b className="block text-sm">Show mascot</b><span className="text-xs text-muted">On by default. Click him for a sarcastic quip, then some real motivation. Untick to hide him.</span></span>
+          <input type="checkbox" aria-label="Show mascot" data-testid="mascot-toggle" checked={look.mascot} onChange={(e) => setProfile(me, { mascot: e.target.checked })} className="h-5 w-5" />
         </label>
         <label className="flex cursor-pointer items-center gap-3 rounded-2xl border border-line p-3">
           <span className="text-3xl">🎈</span>
@@ -144,48 +144,118 @@ export function ThemeMenu({ open, onClose }: { open: boolean; onClose: () => voi
   );
 }
 
-/** The Lead Strategus knight. Click for sarcastic encouragement; he also pipes up now and then. */
+type MascotLine = { kind: 'sarcastic' | 'motivation'; text: string };
+
+/** Office-safe, always-available sarcasm. Context-aware quips are added in front of these. */
+const QUIPS = [
+  `I hold this spear purely for motivational purposes. Mostly. 🗡️`,
+  `Fun fact: a personalised message takes 2 minutes. Scrolling LinkedIn "for research" takes 40.`,
+  `Coffee is not a task type. I asked the PM. Denied. ☕`,
+  `"Quick call" is the longest phrase in the English language. 📞`,
+  `I'd help with the follow-ups, but I'm a drawing. Best excuse in the building.`,
+  `Your to-do list called. It feels ignored. 📋`,
+  `Another tab open? Bold. The task lives in the first one. 🗂️`,
+  `Not saying it's slow today, but the progress bar just yawned. 🥱`,
+  `"I'll do it later" is exactly how later got this crowded. ⏳`,
+  `Inbox zero is a myth. Like dragons. I would know. 🐉`,
+  `The prospect left you on read? Rude. Write a better second message. ✍️`,
+  `I've seen snails with tighter follow-up cadences. Lovely snails, though. 🐌`,
+];
+
+/** Genuine encouragement. Context-aware lines are added in front of these. */
+const MOTIVATION = [
+  `Small steady wins add up. One more message, one more step. 💪`,
+  `You don't need a perfect day, just a focused next hour. 🎯`,
+  `Every "no" gets you closer to a "yes". Keep going. 🚀`,
+  `Progress over perfection. Send it, learn, improve. ✨`,
+  `The meeting you book next week starts with the message you send now. 📬`,
+  `Consistency beats intensity. Show up, do the work, repeat. 🔁`,
+  `You've handled harder days than this one. You've got this. 🛡️`,
+  `Focus on what you can control: the next task, done well. ✅`,
+  `Good work compounds. Today's effort is next month's pipeline. 📈`,
+  `Take a breath, pick one task and give it your full attention. 🌱`,
+  `Your work moves the whole team forward. Thank you for it. 🙌`,
+];
+
+/** The Lead Strategus knight. Clicks alternate a sarcastic quip and genuine motivation; he also pipes up now and then. */
 export function Mascot() {
   const { mascot } = useLook();
   const me = useStore((s) => s.me);
   const tasks = useStore((s) => s.tasks);
   const daily = useStore((s) => s.daily);
-  const [line, setLine] = useState<string | null>(null);
+  const [line, setLine] = useState<MascotLine | null>(null);
   const [n, setN] = useState(0);
+  const turn = useRef({ said: 0, quip: 0, boost: 0 });
+  const lead = isLeadRole(PEOPLE.find((p) => p.id === me)?.role);
   const open = tasks.filter((t) => t.assigneeId === me && (t.status === 'todo' || t.status === 'in_progress' || t.status === 'changes')).length;
-  const d = daily[`${me}|${day(0)}`];
-  const hour = new Date().getHours();
-  const lines = useMemo(() => [
-    open ? `${open} open tasks, ${first(me)}. They won't finish themselves. I checked. Twice.` : `Zero open tasks?! Suspicious. Very suspicious. 🕵️`,
-    !d?.sodAt ? `No targets set for today. Bold strategy. Let's see how it plays out. 🍿` : `Targets locked. Now comes the tiny detail called "doing them".`,
-    hour >= 17 && !d?.eodAt ? `It's ${hour - 12}pm. The end-of-day update won't write itself. I tried. No thumbs. 🛡️` : `Coffee is not a task type. I've asked the PM. Denied. ☕`,
-    `I hold this spear purely for motivational purposes. Mostly. 🗡️`,
-    `Fun fact: a personalised message takes 2 minutes. Scrolling LinkedIn "for research" takes 40.`,
-    `I believe in you. My spear is less convinced. Prove it wrong.`,
-    `Lunch is 1–2pm. It's not a lifestyle, it's a time block. 🍽️`,
-    `Every time you submit a task, a sales rep somewhere finds a meeting. Probably.`,
-  ], [open, d, hour, me]);
+  const today = day(0);
+  const d = daily[`${me}|${today}`];
+  // Managers and founders have no personal targets: count the team members who haven't set theirs yet.
+  const teamNoTargets = lead ? PEOPLE.filter((p) => !isLeadRole(p.role) && !daily[`${p.id}|${today}`]?.sodAt).length : 0;
+  const now = new Date();
+  const hour = now.getHours();
+  const weekday = now.getDay();
+  const name = first(me);
+
+  const { quips, boosts } = useMemo(() => {
+    const q: string[] = [];
+    const workday = weekday >= 1 && weekday <= 5;
+    const m: string[] = [];
+    if (open > 0) q.push(`${open} open task${open === 1 ? '' : 's'}, ${name}. They won't finish themselves. I checked. Twice. 🕵️`);
+    if (open >= 5) q.push(`${open} open tasks and you're reading a cartoon knight. Priorities, ${name}. 👀`);
+    if (open === 0) q.push(`Zero open tasks? Either you're a legend or someone forgot to assign you work. 🤔`);
+    if (workday && lead && teamNoTargets > 0) q.push(`${teamNoTargets} ${teamNoTargets === 1 ? 'person hasn\'t' : 'people haven\'t'} set today's targets. I'd chase them myself, but no legs. Just vibes. 🤷`);
+    if (workday && !lead && !d?.sodAt) q.push(`No targets set for today. Bold strategy. Let's see how it plays out. 🍿`);
+    if (workday && !lead && d?.sodAt && !d.eodAt) q.push(`Targets locked. Now for the tiny detail called "doing them". 🔒`);
+    if (workday && !lead && hour >= 17 && !d?.eodAt) q.push(`It's ${hour - 12}pm and no end of day update. It won't write itself. I tried. No thumbs. 🛡️`);
+    if (hour === 12) q.push(`Lunch is in under an hour. Look busy until then. Or, wild idea, be busy. 🍽️`);
+    if (hour === 13) q.push(`Lunch is 1pm to 2pm. It's a time block, not a lifestyle. 🥪`);
+    if (weekday === 1) q.push(`Monday. The inbox has been breeding all weekend. Good luck. 📬`);
+    if (weekday === 5) q.push(`It's Friday. "Weekend plans" is still not a task type. Nice try. 🎉`);
+
+    if (open === 0) m.push(`All caught up. Take a moment to be proud of that. 🌟`);
+    else if (open <= 3) m.push(`Only ${open} left. Pick the hardest one first and the rest will feel easy. 💡`);
+    if (!lead && d?.eodAt) m.push(`End of day sent. Well done, now switch off and recharge. 🌙`);
+    if (!lead && !d?.sodAt) m.push(`Set three clear targets for today. Clarity is half the work. 🧭`);
+    if (lead) m.push(`A quick word of thanks to someone on the team today goes further than you think. 💬`);
+    if (weekday === 1) m.push(`Fresh week, fresh start. Set your targets and own it. 🌅`);
+    if (weekday === 5) m.push(`Finish the week strong. Monday you will be grateful. 🏁`);
+    return { quips: [...q, ...QUIPS], boosts: [...m, ...MOTIVATION] };
+  }, [open, d, hour, weekday, name, lead, teamNoTargets]);
+
+  // Alternates: sarcastic, motivation, sarcastic, motivation... Each list cycles in order, context lines first.
+  const next = (): MascotLine => {
+    const t = turn.current;
+    const motivate = t.said % 2 === 1;
+    t.said += 1;
+    if (motivate) return { kind: 'motivation', text: boosts[t.boost++ % boosts.length] };
+    return { kind: 'sarcastic', text: quips[t.quip++ % quips.length] };
+  };
+  const speak = () => { setN((x) => x + 1); setLine(next()); };
+  const speakRef = useRef(speak);
+  speakRef.current = speak;
 
   useEffect(() => {
     if (!mascot) return;
-    const t = setInterval(() => { setN((x) => x + 1); setLine(lines[Math.floor(Math.random() * lines.length)]); }, 120_000);
+    const t = setInterval(() => speakRef.current(), 120_000);
     return () => clearInterval(t);
-  }, [mascot, lines]);
+  }, [mascot]);
   useEffect(() => {
     if (!line) return;
-    const t = setTimeout(() => setLine(null), 7000);
+    const t = setTimeout(() => setLine(null), 8000);
     return () => clearTimeout(t);
   }, [line, n]);
 
   if (!mascot) return null;
   return (
-    <div className="fixed bottom-4 left-[92px] z-30 flex items-end gap-2">
-      <button aria-label="Mascot — click for motivation" onClick={() => { setN((x) => x + 1); setLine(lines[(n + 1) % lines.length]); }} className="focus-ring ls-bob shrink-0 rounded-full">
-        <img src="./mascot.webp" alt="Lead Strategus knight mascot" className="h-24 w-24 object-contain drop-shadow-lg" />
+    <div className="pointer-events-none fixed bottom-4 left-[84px] z-30 flex items-end gap-2 sm:left-[92px]">
+      <button aria-label="Mascot: click for a sarcastic quip or some motivation" data-testid="mascot" onClick={speak} className="focus-ring ls-bob pointer-events-auto shrink-0 rounded-full">
+        <img src="./mascot.webp" alt="Lead Strategus knight mascot" className="h-16 w-16 object-contain drop-shadow-lg sm:h-24 sm:w-24" />
       </button>
       {line && (
-        <div key={n} role="status" className="ls-pop relative mb-14 max-w-xs rounded-2xl border-2 border-ink bg-surface px-4 py-3 text-sm font-semibold shadow-lift">
-          {line}
+        <div key={n} role="status" data-testid="mascot-line" data-kind={line.kind} className="ls-pop pointer-events-auto relative mb-10 max-w-[min(20rem,calc(100vw-12rem))] rounded-2xl border-2 border-ink bg-surface px-4 py-3 text-sm font-semibold shadow-lift sm:mb-14">
+          <span className="mb-0.5 block text-[10px] font-bold uppercase tracking-wide text-muted">{line.kind === 'motivation' ? 'Real talk' : 'Sarcasm mode'}</span>
+          {line.text}
           <button aria-label="Dismiss" className="absolute -right-2 -top-2 rounded-full border border-line bg-surface p-0.5" onClick={() => setLine(null)}><X size={12} /></button>
         </div>
       )}

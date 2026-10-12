@@ -52,8 +52,8 @@ export default function Chat({ onClose }: { onClose?: () => void }) {
 
       <section className="flex min-w-0 flex-1 flex-col">
         <header className="border-b border-line p-4">
-          <div className="flex items-center justify-between gap-2"><p className="truncate font-bold">{conv ? title(conv) : 'Chat'}</p>{onClose && <button aria-label="Minimise chat" className="focus-ring rounded-lg px-2 text-lg leading-none text-muted hover:bg-surface-2" onClick={onClose}>–</button>}</div>
-          <p className="text-xs text-muted">🎭 Anonymous — nobody, including management, can see who wrote what.{myAlias && ` You appear as ${myAlias}.`}</p>
+          <div className="flex items-center justify-between gap-2"><p className="truncate font-bold">{conv ? title(conv) : 'Chat'}</p>{onClose && <button aria-label="Minimise chat" className="focus-ring rounded-lg px-2 text-lg leading-none text-muted hover:bg-surface-2" onClick={onClose}>-</button>}</div>
+          <p className="text-xs text-muted">🎭 Anonymous: nobody, including management, can see who wrote what.{myAlias && ` You appear as ${myAlias}.`}</p>
         </header>
         <div className="flex-1 space-y-3 overflow-y-auto p-4">
           {thread.length === 0 && <p className="py-10 text-center text-sm text-muted">Say hello 👋</p>}

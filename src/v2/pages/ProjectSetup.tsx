@@ -1,8 +1,9 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { ArrowRightLeft, CalendarRange, Crown, Plus, ShieldCheck, Trash, X } from 'lucide-react';
 import { Modal, toast } from '@/components';
-import { day, DEFAULT_STANDARDS, PEOPLE, type Project, type Standards } from '../data';
-import { useStore } from '../store';
-import { Avatar, Btn, cx, input, safe } from '../ui';
+import { day, DEFAULT_STANDARDS, fmtDay, isLeadRole, METRICS, PEOPLE, projectWeeks, roleOfPerson, weekStart, type Counts, type Project, type Standards } from '../data';
+import { first, nameOf, useStore, type CustomStandardInput, type TransferMode } from '../store';
+import { Avatar, Btn, cx, fmtMin, input, safe } from '../ui';
 
 const STD_FIELDS: { key: keyof Standards; label: string; hint: string }[] = [
   { key: 'prospect', label: 'Prospect mapping', hint: 'minutes per prospect' },
@@ -10,96 +11,353 @@ const STD_FIELDS: { key: keyof Standards; label: string; hint: string }[] = [
   { key: 'l2', label: '2nd level message', hint: 'minutes per message' },
 ];
 
-/** Onboard a new project, or (with `edit`) change an existing project's details. */
+/** Number fields that stay readable in every theme: explicit surface background, ink text, big digits. */
+const numField = 'focus-ring rounded-lg border-2 border-line bg-surface px-2 py-1 font-extrabold tabular-nums text-ink outline-none placeholder:font-normal placeholder:text-faint focus:border-accent';
+const pickerCls = 'focus-ring min-w-0 max-w-full rounded-xl border border-line bg-surface px-3 py-2 text-sm text-ink sm:min-w-[220px]';
+const sectionBox = 'mt-5 rounded-2xl border border-line bg-surface-2 p-4';
+
+type CsRow = { key: string; id?: string; name: string; unit: string; minutes: string };
+type TeamRow = { id: string; h: string };
+let tmp = 0;
+const tmpKey = () => `row-${++tmp}`;
+const num = (s: string) => Number(String(s).trim().replace(',', '.'));
+const perHour = (m: number) => (m > 0 ? `${Math.round((60 / m) * 10) / 10} per hour` : '');
+const hoursText = (h: number) => (h > 0 ? fmtMin(Math.round(h * 60)) : '');
+const ROLE_GROUP: [string, string][] = [['pm', 'Project managers'], ['resource', 'Resources'], ['manager', 'Manager'], ['founder', 'Founders']];
+
+function Section({ icon, title, hint, children, className }: { icon: ReactNode; title: string; hint?: ReactNode; children: ReactNode; className?: string }) {
+  return (
+    <section className={cx(sectionBox, className)}>
+      <p className="flex items-center gap-2 text-sm font-bold">{icon} {title}</p>
+      {hint && <p className="mb-3 mt-0.5 text-xs text-muted">{hint}</p>}
+      {children}
+    </section>
+  );
+}
+
+/** A select listing people (grouped by role), used to add someone. Resets after each pick. */
+function PersonPicker({ label, exclude, onPick, roles }: { label: string; exclude: string[]; onPick: (id: string) => void; roles?: string[] }) {
+  const groups = ROLE_GROUP.filter(([r]) => !roles || roles.includes(r));
+  return (
+    <select aria-label={label} className={pickerCls} value="" onChange={(e) => e.target.value && onPick(e.target.value)}>
+      <option value="">{label}…</option>
+      {groups.map(([r, l]) => {
+        const list = PEOPLE.filter((p) => p.role === r && !exclude.includes(p.id));
+        return list.length ? <optgroup key={r} label={l}>{list.map((p) => <option key={p.id} value={p.id}>{nameOf(p.id)} · {p.title}</option>)}</optgroup> : null;
+      })}
+    </select>
+  );
+}
+
+/** Onboard a new project, or (with `edit`) change an existing project's details, admins and owner. */
 export function ProjectSetup({ open, onClose, edit }: { open: boolean; onClose: () => void; edit?: Project }) {
-  const { me, proposeProject, updateProject } = useStore();
-  const lead = ['manager', 'founder'].includes(PEOPLE.find((p) => p.id === me)?.role ?? '');
+  const { me, proposeProject, updateProject, setProjectAdmins, removeProjectAdmin, transferProject } = useStore();
+  const lead = isLeadRole(roleOfPerson(me));
+  const owner = edit ? edit.pmId : me;
+  const canEditAdmins = !edit || edit.pmId === me || lead;
   const [description, setDescription] = useState('');
   const [name, setName] = useState('');
   const [client, setClient] = useState('');
   const [startDate, setStart] = useState(day(0));
   const [endDate, setEnd] = useState(day(90));
-  const [hours, setHours] = useState<Record<string, number>>({});
-  const [standards, setStandards] = useState<Standards>(DEFAULT_STANDARDS);
+  const [team, setTeam] = useState<TeamRow[]>([]);
+  const [std, setStd] = useState<Record<keyof Standards, string>>({ prospect: '2', l1: '2', l2: '1.5' });
+  const [custom, setCustom] = useState<CsRow[]>([]);
+  const [draftCs, setDraftCs] = useState({ name: '', unit: '', minutes: '' });
+  const [admins, setAdmins] = useState<string[]>([]);
+  const [newOwner, setNewOwner] = useState('');
+  const [confirm, setConfirm] = useState<TransferMode | null>(null);
+  const [allWeeks, setAllWeeks] = useState(false);
+  const [justAdded, setJustAdded] = useState('');
+  const [weekT, setWeekT] = useState<Record<string, string>>({});
+  const [plans, setPlans] = useState<Record<string, Record<string, string>>>({});
+  const [planWs, setPlanWs] = useState('');
   const [err, setErr] = useState('');
-  const team = PEOPLE.filter((p) => p.role === 'resource' || p.role === 'pm');
 
   useEffect(() => {
     if (!open) return;
-    setErr('');
+    setErr(''); setConfirm(null); setNewOwner(''); setAllWeeks(false); setDraftCs({ name: '', unit: '', minutes: '' }); setJustAdded('');
     if (edit) {
       setName(edit.name); setClient(edit.client); setDescription(edit.description); setStart(edit.startDate); setEnd(edit.endDate);
-      setHours(edit.hours); setStandards({ ...DEFAULT_STANDARDS, ...edit.standards });
+      const ids = [...new Set([...Object.keys(edit.hours), ...edit.teamIds])];
+      setTeam(ids.map((id) => ({ id, h: String(edit.hours[id] ?? 0) })));
+      const s = { ...DEFAULT_STANDARDS, ...edit.standards };
+      setStd({ prospect: String(s.prospect), l1: String(s.l1), l2: String(s.l2) });
+      setCustom((edit.customStandards ?? []).map((c) => ({ key: c.id, id: c.id, name: c.name, unit: c.unit, minutes: String(c.minutes) })));
+      setAdmins(edit.admins ?? []);
     }
   }, [open, edit]);
 
+  const weeks = useMemo(() => (startDate && endDate && endDate >= startDate ? projectWeeks({ startDate, endDate }, 0).filter((w) => w.start <= endDate) : []), [startDate, endDate]);
+  const shownWeeks = allWeeks || weeks.length <= 9 ? weeks : weeks.slice(0, 8);
+
+  const resetCreate = () => {
+    setWeekT({}); setPlans({}); setPlanWs('');
+    setName(''); setClient(''); setDescription(''); setTeam([]); setStd({ prospect: '2', l1: '2', l2: '1.5' }); setCustom([]); setAdmins([]); setErr('');
+  };
+
+  const addCustom = () => {
+    const nm = draftCs.name.trim();
+    const m = num(draftCs.minutes);
+    if (!nm) return setErr('Give the custom task a name.');
+    if (custom.some((c) => c.name.trim().toLowerCase() === nm.toLowerCase())) return setErr(`"${nm}" is already in the list.`);
+    if (!(m > 0)) return setErr(`Set the minutes per unit for "${nm}" (above 0).`);
+    setCustom((list) => [...list, { key: tmpKey(), name: nm, unit: draftCs.unit.trim() || 'items', minutes: String(m) }]);
+    setDraftCs({ name: '', unit: '', minutes: '' });
+    setErr('');
+  };
+
+  /** Turns the typed fields into store values; throws a friendly error if something is off. */
+  const collect = () => {
+    const standards = Object.fromEntries(STD_FIELDS.map((f) => {
+      const v = num(std[f.key]);
+      if (!(v > 0)) throw new Error(`Set the standard time for ${f.label.toLowerCase()} (above 0 minutes).`);
+      return [f.key, v];
+    })) as unknown as Standards;
+    const hours: Record<string, number> = {};
+    team.forEach((r) => {
+      if (!r.h.trim()) throw new Error(`Type the hours per day for ${first(r.id)} (for example 1.5).`);
+      const v = num(r.h);
+      if (!Number.isFinite(v) || v < 0 || v > 12) throw new Error(`Hours per day for ${first(r.id)} must be between 0 and 12.`);
+      hours[r.id] = v;
+    });
+    const customStandards: CustomStandardInput[] = custom.map((c) => ({ id: c.id, name: c.name, unit: c.unit, minutes: num(c.minutes) }));
+    return { standards, hours, customStandards };
+  };
+
   const submit = () => {
     if (edit) {
-      if (safe(() => updateProject(edit.id, { name: name.trim(), client: client.trim(), description: description.trim(), startDate, endDate, hours, standards }), setErr)) {
-        toast({ title: 'Project details updated', tone: 'success' });
-        onClose();
-      }
+      const ok = safe(() => {
+        const v = collect();
+        updateProject(edit.id, { name: name.trim(), client: client.trim(), description: description.trim(), startDate, endDate, ...v });
+        const same = admins.length === edit.admins.length && admins.every((a) => edit.admins.includes(a));
+        if (canEditAdmins && !same) setProjectAdmins(edit.id, admins);
+      }, setErr);
+      if (ok) { toast({ title: 'Project details updated', tone: 'success' }); onClose(); }
       return;
     }
-    if (safe(() => proposeProject({ name, client, description, startDate, endDate, hours, standards }), setErr)) {
+    const toCounts = (r: Record<string, string>, what: string): Counts => Object.fromEntries(Object.entries(r).filter(([, v]) => v.trim() !== '').map(([k, v]) => {
+      const n = num(v);
+      if (!Number.isFinite(n) || n < 0) throw new Error(`${what}: targets must be zero or more.`);
+      return [k, Math.round(n)];
+    }));
+    if (safe(() => {
+      const v = collect();
+      const weekTarget = toCounts(weekT, 'Default weekly target');
+      const weekPlans = Object.fromEntries(Object.entries(plans).filter(([ws]) => weeks.some((w) => w.start === ws)).map(([ws, r]) => [ws, { ...weekTarget, ...toCounts(r, 'Week plan') }]));
+      proposeProject({ name, client, description, startDate, endDate, ...v, admins, weekTarget: Object.keys(weekTarget).length ? weekTarget : undefined, weekPlans });
+    }, setErr)) {
       toast({ title: lead ? `${name} is live 🎉` : `${name} sent to management for approval`, tone: 'success' });
-      setName(''); setClient(''); setDescription(''); setHours({}); setStandards(DEFAULT_STANDARDS); setErr('');
+      resetCreate();
       onClose();
     }
   };
+
+  const stepDown = () => {
+    if (!edit) return;
+    if (safe(() => removeProjectAdmin(edit.id, me), setErr)) { toast({ title: `You are no longer an admin of ${edit.name}`, tone: 'info' }); onClose(); }
+  };
+
+  const handover = (mode: TransferMode) => {
+    if (!edit || !newOwner) return;
+    if (safe(() => transferProject(edit.id, newOwner, mode), setErr)) {
+      toast({ title: `${edit.name} handed over to ${first(newOwner)}`, tone: 'success' });
+      onClose();
+    }
+  };
+
+  const meOwner = edit?.pmId === me;
+  const MODES: { mode: TransferMode; label: string; effect: string }[] = meOwner
+    ? [
+      { mode: 'remove-me', label: 'Transfer and remove myself', effect: 'You leave the project completely.' },
+      { mode: 'stay-admin', label: 'Transfer and stay as admin', effect: 'You keep admin access: targets, numbers, tasks and details.' },
+      { mode: 'stay-member', label: 'Transfer and stay as team member', effect: 'You stay on the team without admin access.' },
+    ]
+    : [
+      { mode: 'remove-me', label: `Transfer and remove ${first(owner)}`, effect: `${first(owner)} leaves the project completely.` },
+      { mode: 'stay-admin', label: `Transfer, ${first(owner)} stays as admin`, effect: `${first(owner)} keeps admin access.` },
+      { mode: 'stay-member', label: `Transfer, ${first(owner)} stays as team member`, effect: `${first(owner)} stays on the team without admin access.` },
+    ];
+  const pending = MODES.find((m) => m.mode === confirm);
 
   return (
     <Modal
       open={open}
       onClose={onClose}
       title={edit ? 'Edit project details' : lead ? 'Onboard a new project' : 'Propose a new project'}
-      description={edit ? undefined : lead ? undefined : 'Once a manager or founder approves it, you own it and can assign tasks.'}
+      description={edit ? 'Changes apply to this project only.' : lead ? undefined : 'Once a manager or founder approves it, you own it and can assign tasks.'}
       size="lg"
-      footer={<Btn onClick={submit}>{edit ? 'Save changes' : lead ? 'Create project' : 'Send for approval'}</Btn>}
+      footer={<>{err && <p role="alert" className="mr-auto text-sm font-semibold text-coral-ink">{err}</p>}<Btn tone="ghost" onClick={onClose}>Cancel</Btn><Btn onClick={submit}>{edit ? 'Save changes' : lead ? 'Create project' : 'Send for approval'}</Btn></>}
     >
       <div className="grid gap-3 sm:grid-cols-2">
-        <label className="text-sm font-semibold">Project name<input className={cx(input, 'mt-1')} value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Orbit AI – EU Outbound" /></label>
-        <label className="text-sm font-semibold">Client<input className={cx(input, 'mt-1')} value={client} onChange={(e) => setClient(e.target.value)} placeholder="e.g. Orbit AI" /></label>
-        <label className="text-sm font-semibold">Start date<input type="date" className={cx(input, 'mt-1')} value={startDate} onChange={(e) => setStart(e.target.value)} /></label>
-        <label className="text-sm font-semibold">End date<input type="date" className={cx(input, 'mt-1')} value={endDate} onChange={(e) => setEnd(e.target.value)} /></label>
-        <label className="text-sm font-semibold sm:col-span-2">Description<textarea className={cx(input, 'mt-1')} rows={2} value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Who are we reaching, and what does success look like?" /></label>
+        <label className="text-sm font-semibold">Project name<input className={cx(input, 'mt-1 text-ink')} value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Orbit AI - EU Outbound" /></label>
+        <label className="text-sm font-semibold">Client<input className={cx(input, 'mt-1 text-ink')} value={client} onChange={(e) => setClient(e.target.value)} placeholder="e.g. Orbit AI" /></label>
+        <label className="text-sm font-semibold">Start date<input type="date" className={cx(input, 'mt-1 text-ink')} value={startDate} onChange={(e) => setStart(e.target.value)} /></label>
+        <label className="text-sm font-semibold">End date<input type="date" className={cx(input, 'mt-1 text-ink')} value={endDate} onChange={(e) => setEnd(e.target.value)} /></label>
+        <label className="text-sm font-semibold sm:col-span-2">Description<textarea className={cx(input, 'mt-1 text-ink')} rows={2} value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Who are we reaching, and what does success look like?" /></label>
       </div>
 
-      <div className="mt-5 rounded-2xl border border-line bg-surface-2 p-4">
-        <p className="text-sm font-bold">⏱️ Standard time for this project</p>
-        <p className="mb-3 text-xs text-muted">Every target time and on-time % for this project is measured against these. Different projects can have different standards.</p>
+      <Section icon={<CalendarRange size={15} className="text-accent" />} title="Project weeks"
+        hint={weeks.length ? <>Weeks are numbered from the start date, Monday to Friday. {edit ? 'Pre-plan targets for any week in the Targets tab.' : 'Once the project is live you can pre-plan targets for each week in its Targets tab.'}</> : undefined}>
+        {weeks.length === 0 ? <p className="text-xs font-semibold text-coral-ink">Pick a start date and an end date after it to see the weeks.</p> : (
+          <>
+            <p className="mb-2 text-xs text-muted"><b className="text-ink">{weeks.length} week{weeks.length === 1 ? '' : 's'}</b> from {fmtDay(weeks[0].start)} to {fmtDay(weeks[weeks.length - 1].end)}</p>
+            <ul className="flex flex-wrap gap-1.5" aria-label="Week preview">
+              {shownWeeks.map((w) => (
+                <li key={w.start} className={cx('rounded-lg border px-2 py-1 text-xs', w.start === weekStart(0) ? 'border-accent bg-accent-soft font-semibold text-accent-ink' : 'border-line bg-surface text-ink')}>
+                  {w.label}{w.start === weekStart(0) ? ' (this week)' : w.start === weekStart(1) ? ' (next week)' : ''}
+                </li>
+              ))}
+              {weeks.length > 9 && (
+                <li><button type="button" className="focus-ring rounded-lg px-2 py-1 text-xs font-semibold text-accent-ink hover:bg-surface" onClick={() => setAllWeeks((v) => !v)}>{allWeeks ? 'Show fewer' : `+ ${weeks.length - 8} more weeks`}</button></li>
+              )}
+            </ul>
+          </>
+        )}
+      </Section>
+
+      {!edit && weeks.length > 0 && (() => {
+        const pw = weeks.some((w) => w.start === planWs) ? planWs : weeks[0].start;
+        const cur = plans[pw] ?? {};
+        return (
+          <Section icon={<span>📅</span>} title="Plan the weeks" hint="Set a default weekly target, then pre-plan any of the first weeks if it should differ. Blank fields use the default. Saved with the project.">
+            <p className="mb-1.5 text-xs font-bold uppercase tracking-wide text-muted">Default weekly target</p>
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+              {METRICS.map((m) => (
+                <label key={m.id} className="rounded-xl border border-line bg-surface p-2 text-xs font-semibold text-ink">
+                  <span className="block truncate" title={m.label}>{m.label}</span>
+                  <input type="number" min={0} inputMode="numeric" aria-label={`${m.label} default weekly target`} className={cx(numField, 'mt-1 w-full text-base')} placeholder="0" value={weekT[m.id] ?? ''} onChange={(e) => setWeekT({ ...weekT, [m.id]: e.target.value })} />
+                </label>
+              ))}
+            </div>
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <p className="text-xs font-bold uppercase tracking-wide text-muted">Pre-plan</p>
+              <select aria-label="Pre-plan week" className={pickerCls} value={pw} onChange={(e) => setPlanWs(e.target.value)}>
+                {weeks.slice(0, 8).map((w) => <option key={w.start} value={w.start}>{w.label}{plans[w.start] && Object.values(plans[w.start]).some((v) => v.trim()) ? ' · planned' : ''}</option>)}
+              </select>
+            </div>
+            <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-4">
+              {METRICS.map((m) => (
+                <label key={m.id} className="rounded-xl border border-line bg-surface p-2 text-xs font-semibold text-ink">
+                  <span className="block truncate" title={m.label}>{m.label}</span>
+                  <input type="number" min={0} inputMode="numeric" aria-label={`${m.label} target for the planned week`} className={cx(numField, 'mt-1 w-full text-base')} placeholder={weekT[m.id] || 'default'} value={cur[m.id] ?? ''} onChange={(e) => setPlans({ ...plans, [pw]: { ...cur, [m.id]: e.target.value } })} />
+                </label>
+              ))}
+            </div>
+          </Section>
+        );
+      })()}
+
+      <Section icon={<span>⏱️</span>} title="Standard time for this project" hint="Every target time and on-time % for this project is measured against these. Different projects can have different standards.">
         <div className="grid gap-3 sm:grid-cols-3">
           {STD_FIELDS.map((f) => (
-            <label key={f.key} className="rounded-xl border border-line bg-surface p-3 text-sm">
+            <label key={f.key} className="rounded-xl border border-line bg-surface p-3 text-sm text-ink">
               <span className="font-semibold">{f.label}</span>
-              <span className="mt-1 flex items-baseline gap-1">
-                <input type="number" min={0.1} step={0.1} aria-label={`${f.label} standard minutes`} className="w-20 rounded-lg border border-line px-2 py-1 text-lg font-extrabold" value={standards[f.key]} onChange={(e) => setStandards({ ...standards, [f.key]: +e.target.value })} />
-                <span className="text-xs text-muted">min</span>
+              <span className="mt-1.5 flex items-baseline gap-1.5">
+                <input type="number" inputMode="decimal" min={0.1} step={0.1} aria-label={`${f.label} standard minutes`} className={cx(numField, 'w-24 text-2xl')} value={std[f.key]} onChange={(e) => setStd({ ...std, [f.key]: e.target.value })} />
+                <span className="text-sm font-semibold text-muted">min</span>
               </span>
-              <span className="mt-1 block text-[11px] text-muted">{f.hint} · {Math.round(60 / (standards[f.key] || 1))} per hour</span>
+              <span className="mt-1 block text-[11px] text-muted">{f.hint}{num(std[f.key]) > 0 ? ` · ${perHour(num(std[f.key]))}` : ''}</span>
             </label>
           ))}
         </div>
-      </div>
+      </Section>
 
-      <p className="mb-2 mt-5 text-sm font-semibold">Team & hours per day</p>
-      <ul className="divide-y divide-line rounded-xl border border-line">
-        {team.map((p) => (
-          <li key={p.id} className="flex items-center gap-3 px-3 py-2">
-            <Avatar id={p.id} size="sm" />
-            <span className="flex-1 text-sm">{p.name} <span className="text-xs text-muted">· {p.title}</span></span>
-            <div className="flex gap-1">
-              {[0, 2, 4, 6, 8].map((h) => (
-                <button key={h} onClick={() => setHours((s) => ({ ...s, [p.id]: h }))}
-                  className={cx('focus-ring rounded-lg px-2 py-1 text-xs font-semibold', (hours[p.id] ?? 0) === h ? 'bg-accent text-accent-on' : 'bg-surface-2 text-muted')}>
-                  {h ? `${h}h` : '—'}
-                </button>
-              ))}
+      <Section icon={<span>🧩</span>} title="Custom standard tasks" hint="Project-specific tasks with their own standard time, e.g. LinkedIn connection request at 0.5 min each. They show up as task types in Assign for this project.">
+        {custom.length > 0 && (
+          <ul className="mb-3 divide-y divide-line overflow-hidden rounded-xl border border-line bg-surface" aria-label="Custom standard tasks">
+            {custom.map((c, i) => (
+              <li key={c.key} className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2 px-3 py-2 sm:grid-cols-[minmax(0,1fr)_7rem_15rem_auto]">
+                <input aria-label="Custom task name" className={cx(input, 'py-1.5 font-semibold text-ink')} value={c.name} onChange={(e) => setCustom((l) => l.map((x, j) => (j === i ? { ...x, name: e.target.value } : x)))} />
+                <input aria-label={`Unit for ${c.name}`} className={cx(input, 'hidden py-1.5 text-ink sm:block')} value={c.unit} onChange={(e) => setCustom((l) => l.map((x, j) => (j === i ? { ...x, unit: e.target.value } : x)))} />
+                <span className="col-start-1 row-start-2 flex items-baseline gap-1.5 sm:col-start-auto sm:row-start-auto">
+                  <input type="number" inputMode="decimal" min={0.1} step={0.1} aria-label={`Minutes per unit for ${c.name}`} className={cx(numField, 'w-20 text-lg')} value={c.minutes} onChange={(e) => setCustom((l) => l.map((x, j) => (j === i ? { ...x, minutes: e.target.value } : x)))} />
+                  <span className="whitespace-nowrap text-xs text-muted">min per {c.unit.replace(/s$/, '') || 'item'}{num(c.minutes) > 0 ? ` · ${perHour(num(c.minutes))}` : ''}</span>
+                </span>
+                <button type="button" aria-label={`Delete ${c.name}`} title="Delete" className="focus-ring row-span-2 rounded-lg p-2 text-muted hover:bg-coral hover:text-coral-ink sm:row-span-1" onClick={() => setCustom((l) => l.filter((_, j) => j !== i))}><Trash size={15} /></button>
+              </li>
+            ))}
+          </ul>
+        )}
+        <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_7rem_7rem_auto]">
+          <input aria-label="New custom task name" className={cx(input, 'text-ink')} placeholder="Task name, e.g. LinkedIn connection request" value={draftCs.name} onChange={(e) => setDraftCs({ ...draftCs, name: e.target.value })} onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), addCustom())} />
+          <input aria-label="New custom task unit" className={cx(input, 'text-ink')} placeholder="Unit, e.g. calls" value={draftCs.unit} onChange={(e) => setDraftCs({ ...draftCs, unit: e.target.value })} onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), addCustom())} />
+          <input type="number" inputMode="decimal" min={0.1} step={0.1} aria-label="New custom task minutes per unit" className={cx(numField, 'w-full text-base')} placeholder="Min per unit" value={draftCs.minutes} onChange={(e) => setDraftCs({ ...draftCs, minutes: e.target.value })} onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), addCustom())} />
+          <Btn type="button" tone="soft" onClick={addCustom}><Plus size={14} /> Add task</Btn>
+        </div>
+      </Section>
+
+      <Section icon={<span>👥</span>} title="Team and hours per day" hint={<>Type each person's hours per day, decimals are fine (1.5 = 1h 30m, 0.75 = 45m). {edit ? 'Setting 0 takes someone off the team.' : 'You are added to the team automatically.'}</>}>
+        {team.length > 0 ? (
+          <ul className="mb-3 divide-y divide-line overflow-hidden rounded-xl border border-line bg-surface" aria-label="Team and hours">
+            {team.map((r, i) => (
+              <li key={r.id} className="flex flex-wrap items-center gap-3 px-3 py-2">
+                <Avatar id={r.id} size="sm" />
+                <span className="min-w-0 flex-1 text-sm text-ink">{nameOf(r.id)} <span className="text-xs text-muted">· {PEOPLE.find((p) => p.id === r.id)?.title}{r.id === owner ? ' · owner' : ''}</span></span>
+                <span className="flex items-baseline gap-1.5">
+                  <input type="number" inputMode="decimal" min={0} max={12} step={0.25} placeholder="e.g. 1.5" autoFocus={r.id === justAdded} aria-label={`Hours per day for ${nameOf(r.id)}`} className={cx(numField, 'w-24 text-lg')} value={r.h} onChange={(e) => setTeam((l) => l.map((x, j) => (j === i ? { ...x, h: e.target.value } : x)))} />
+                  <span className="w-16 text-xs text-muted">h / day{hoursText(num(r.h)) && <span className="block text-[10px]">= {hoursText(num(r.h))}</span>}</span>
+                </span>
+                <button type="button" aria-label={`Remove ${nameOf(r.id)} from the team`} className="focus-ring rounded-lg p-1.5 text-muted hover:bg-surface-2 hover:text-coral-ink" onClick={() => setTeam((l) => l.filter((_, j) => j !== i))}><X size={14} /></button>
+              </li>
+            ))}
+          </ul>
+        ) : <p className="mb-3 text-xs text-muted">Nobody added yet.</p>}
+        <PersonPicker label="Add a person to the team" roles={['pm', 'resource']} exclude={team.map((r) => r.id)} onPick={(id) => { setTeam((l) => [...l, { id, h: '' }]); setJustAdded(id); }} />
+      </Section>
+
+      <Section icon={<ShieldCheck size={15} className="text-accent" />} title="Project admins" hint="Admins can do everything the owner can on this project: set targets and numbers, assign tasks, book meetings and edit these details.">
+        <div className="mb-3 flex flex-wrap items-center gap-2" aria-label="Owner and admins">
+          <span className="inline-flex items-center gap-2 rounded-full border border-line bg-surface py-1 pl-1 pr-3 text-sm text-ink"><Avatar id={owner} size="sm" /> {nameOf(owner)} <span className="inline-flex items-center gap-0.5 text-xs font-semibold text-butter-ink"><Crown size={12} /> Owner</span></span>
+          {admins.map((a) => (
+            <span key={a} data-admin={a} className="inline-flex items-center gap-2 rounded-full border border-line bg-surface py-1 pl-1 pr-1.5 text-sm text-ink">
+              <Avatar id={a} size="sm" /> {nameOf(a)} <span className="text-xs font-semibold text-accent-ink">Admin</span>
+              {canEditAdmins ? (
+                <button type="button" aria-label={`Remove ${nameOf(a)} as admin`} className="focus-ring rounded-full p-1 text-muted hover:bg-surface-2 hover:text-coral-ink" onClick={() => setAdmins((l) => l.filter((x) => x !== a))}><X size={12} /></button>
+              ) : <span className="w-1" />}
+            </span>
+          ))}
+          {admins.length === 0 && <span className="text-xs text-muted">No admins yet.</span>}
+        </div>
+        {canEditAdmins ? (
+          <PersonPicker label="Add an admin" exclude={[owner, ...admins]} onPick={(id) => setAdmins((l) => [...l, id])} />
+        ) : edit?.admins.includes(me) ? (
+          <Btn type="button" tone="ghost" className="border border-line bg-surface" onClick={stepDown}>Step down as admin</Btn>
+        ) : null}
+        {edit && canEditAdmins && <p className="mt-2 text-[11px] text-muted">Admin changes are saved with Save changes.</p>}
+      </Section>
+
+      {edit && (edit.pmId === me || lead) && (
+        <Section className="border-peach-strong/60 bg-peach/30" icon={<ArrowRightLeft size={15} className="text-peach-ink" />} title="Handover"
+          hint={<>Make someone else the owner in one click. They are told straight away, and management sees it in the project's updates. This happens immediately, separately from Save changes.</>}>
+          <div className="flex flex-wrap items-center gap-2">
+            <label className="text-sm font-semibold text-ink" htmlFor="handover-to">New owner</label>
+            <select id="handover-to" aria-label="New owner" className={pickerCls} value={newOwner} onChange={(e) => { setNewOwner(e.target.value); setConfirm(null); }}>
+              <option value="">Pick a person…</option>
+              {ROLE_GROUP.map(([r, l]) => {
+                const list = PEOPLE.filter((p) => p.role === r && p.id !== edit.pmId);
+                return list.length ? <optgroup key={r} label={l}>{list.map((p) => <option key={p.id} value={p.id}>{nameOf(p.id)} · {p.title}</option>)}</optgroup> : null;
+              })}
+            </select>
+          </div>
+          <div className="mt-3 grid gap-2 sm:grid-cols-3">
+            {MODES.map((m) => (
+              <button key={m.mode} type="button" disabled={!newOwner} onClick={() => setConfirm(m.mode)}
+                className={cx('focus-ring rounded-xl border-2 bg-surface p-3 text-left text-sm transition disabled:cursor-not-allowed disabled:opacity-50', confirm === m.mode ? 'border-accent' : 'border-line hover:border-accent/60')}>
+                <span className="block font-bold text-ink">{m.label}</span>
+                <span className="mt-0.5 block text-xs text-muted">{m.effect}</span>
+              </button>
+            ))}
+          </div>
+          {pending && newOwner && (
+            <div role="alertdialog" aria-label="Confirm handover" className="mt-3 flex flex-wrap items-center gap-3 rounded-xl border border-line bg-surface p-3">
+              <p className="min-w-0 flex-1 text-sm text-ink">Hand <b>{edit.name}</b> over to <b>{nameOf(newOwner)}</b>? {pending.effect}</p>
+              <Btn type="button" tone="ghost" onClick={() => setConfirm(null)}>Cancel</Btn>
+              <Btn type="button" onClick={() => handover(pending.mode)}><ArrowRightLeft size={14} /> Confirm handover</Btn>
             </div>
-          </li>
-        ))}
-      </ul>
-      {err && <p role="alert" className="mt-3 text-sm font-semibold text-coral-ink">{err}</p>}
+          )}
+        </Section>
+      )}
     </Modal>
   );
 }

@@ -1,10 +1,15 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { ChevronLeft, ChevronRight, Crown, Sparkles, Trophy } from 'lucide-react';
 import { Modal } from '@/components';
-import { dailyHistory, day, inPeriod, PEOPLE, toOnTime, weekStart, type Project, type Task } from '../data';
-import { first, nameOf, onTimeRate, projectCounts, useStore, type DayBlock, type PeriodKey } from '../store';
+import { day, inPeriod, PEOPLE, weekStart, type Project, type Task } from '../data';
+import { first, nameOf, onTimeRate, projectCounts, useStore, type DayBlock } from '../store';
+import { personSeries, teamTable } from '../analytics';
 import { Avatar, Bar, Chip, PROJECT_COLORS, STATUS, cx, fmtMin } from '../ui';
 import { useLook } from '../theme';
+import { ResubmitChip, TaskHistory } from './TaskCard';
+// Project progress section (TargetsTable / MetricTile)
+import { LayoutGrid, Rows3 } from 'lucide-react';
+import { canManage, fmtDay, projectWeeks, weekTargetFor, workingDaysBetween } from '../data';
 
 const DAY_START = 10 * 60;
 const DAY_END = 19 * 60;
@@ -25,11 +30,11 @@ export function DayTracker({ blocks, loggedMinutes }: { blocks: DayBlock[]; logg
   const span = DAY_END - DAY_START;
   const mins = now.getHours() * 60 + now.getMinutes();
   const pct = Math.min(100, Math.max(0, ((mins - DAY_START) / span) * 100));
-  const label = mins < DAY_START ? 'Day starts at 10am' : mins > DAY_END ? 'Day complete — see you tomorrow 🌙' : `${Math.floor((DAY_END - mins) / 60)}h ${(DAY_END - mins) % 60}m left today`;
+  const label = mins < DAY_START ? 'Day starts at 10am' : mins > DAY_END ? 'Day complete, see you tomorrow 🌙' : `${Math.floor((DAY_END - mins) / 60)}h ${(DAY_END - mins) % 60}m left today`;
   return (
     <div className="pt-6">
       <div className="relative h-10 overflow-hidden rounded-xl bg-surface-2">
-        <div className="absolute inset-y-0 flex items-center justify-center border-x-2 border-surface bg-grey text-[11px] font-semibold text-grey-ink" style={{ left: `${((13 * 60 - DAY_START) / span) * 100}%`, width: `${(60 / span) * 100}%`, backgroundImage: 'repeating-linear-gradient(135deg, rgb(0 0 0 / 0.04) 0 6px, transparent 6px 12px)' }} title="Lunch 1–2pm">
+        <div className="absolute inset-y-0 flex items-center justify-center border-x-2 border-surface bg-grey text-[11px] font-semibold text-grey-ink" style={{ left: `${((13 * 60 - DAY_START) / span) * 100}%`, width: `${(60 / span) * 100}%`, backgroundImage: 'repeating-linear-gradient(135deg, rgb(0 0 0 / 0.04) 0 6px, transparent 6px 12px)' }} title="Lunch 1pm to 2pm">
           🍽 Lunch
         </div>
         {blocks.map((b) => {
@@ -37,8 +42,8 @@ export function DayTracker({ blocks, loggedMinutes }: { blocks: DayBlock[]; logg
           const l = ((toMin(b.start) - DAY_START) / span) * 100;
           const w = ((toMin(b.end) - toMin(b.start)) / span) * 100;
           return (
-            <div key={b.id} className="absolute inset-y-0 flex items-center justify-center truncate border-r-2 border-surface px-2 text-[11px] font-semibold text-white" style={{ left: `${l}%`, width: `${w}%`, background: b.custom ? (b.custom.priority ? '#DC2626' : '#64748B') : colorOf(projects, b.projectId), ...deco(colorOf(projects, b.projectId)), ...(b.custom ? { backgroundImage: 'repeating-linear-gradient(45deg, rgb(255 255 255 / 0.12) 0 6px, transparent 6px 12px)' } : {}) }} title={`${b.start}–${b.end} · ${b.custom ? b.custom.title : p?.name}`}>
-              {b.custom ? `${b.custom.priority ? '★ ' : ''}${b.custom.title}` : p?.client} · {b.start}–{b.end}
+            <div key={b.id} className="absolute inset-y-0 flex items-center justify-center truncate border-r-2 border-surface px-2 text-[11px] font-semibold text-white" style={{ left: `${l}%`, width: `${w}%`, background: b.custom ? (b.custom.priority ? '#DC2626' : '#64748B') : colorOf(projects, b.projectId), ...deco(colorOf(projects, b.projectId)), ...(b.custom ? { backgroundImage: 'repeating-linear-gradient(45deg, rgb(255 255 255 / 0.12) 0 6px, transparent 6px 12px)' } : {}) }} title={`${b.start} to ${b.end} · ${b.custom ? b.custom.title : p?.name}`}>
+              {b.custom ? `${b.custom.priority ? '★ ' : ''}${b.custom.title}` : p?.client} · {b.start} to {b.end}
             </div>
           );
         })}
@@ -58,7 +63,6 @@ export function DayTracker({ blocks, loggedMinutes }: { blocks: DayBlock[]; logg
   );
 }
 
-const latest = (h: number[]) => h[h.length - 1] ?? 0;
 
 /** Spotlight: three bold award cards; click for details. */
 export function Spotlights() {
@@ -66,22 +70,29 @@ export function Spotlights() {
   const tasks = useStore((s) => s.tasks);
   useStore((s) => s.profiles); // re-render when names/photos change
   const [open, setOpen] = useState<null | 'project' | 'resource' | 'pm'>(null);
+  const daily = useStore((s) => s.daily);
+  // Ranked from real task data (same numbers as the People tab): on-time % this month, then tasks done.
+  const rows = useMemo(() => teamTable({ tasks, daily }, 'month', 'current', { people: PEOPLE.map((p) => p.id) }), [tasks, daily]);
   const s = useMemo(() => {
-    const best = (role: string) => PEOPLE.filter((p) => p.role === role && p.history.length).sort((a, b) => latest(b.history) - latest(a.history))[0];
+    const best = (role: string) => {
+      const ids = new Set(PEOPLE.filter((p) => p.role === role).map((p) => p.id));
+      const r = rows.filter((x) => ids.has(x.personId) && x.onTime != null && x.tasks > 0).sort((a, b) => b.onTime! - a.onTime! || b.tasks - a.tasks)[0];
+      return r ? { ...PEOPLE.find((p) => p.id === r.personId)!, row: r } : undefined;
+    };
     const active = projects.filter((p) => p.status === 'active');
     const project = [...active].sort((a, b) => (b.month.meetings ?? 0) / Math.max(1, b.monthTarget.meetings ?? 0) - (a.month.meetings ?? 0) / Math.max(1, a.monthTarget.meetings ?? 0))[0];
     return { resource: best('resource'), pm: best('pm'), project };
-  }, [projects]);
+  }, [projects, rows]);
 
   const month = new Date().toLocaleDateString(undefined, { month: 'long' });
   const cards = [
-    { key: 'resource' as const, icon: Sparkles, title: 'Star Resource', id: s.resource?.id, name: s.resource ? nameOf(s.resource.id) : '—', stat: s.resource ? `${toOnTime(latest(s.resource.history))}% of tasks on time` : '', bg: 'from-[#0E9F6E] via-[#0B7F5B] to-[#065F46]' },
-    { key: 'project' as const, icon: Trophy, title: 'Project of the Month', id: undefined, name: s.project?.name ?? '—', stat: s.project ? `${s.project.month.meetings ?? 0} meetings booked` : '', bg: 'from-[#F59E0B] via-[#D97706] to-[#B45309]' },
-    { key: 'pm' as const, icon: Crown, title: 'Star Project Manager', id: s.pm?.id, name: s.pm ? nameOf(s.pm.id) : '—', stat: s.pm ? `${toOnTime(latest(s.pm.history))}% of tasks on time` : '', bg: 'from-[#1D3FA0] via-[#2747C9] to-[#4F46E5]' },
+    { key: 'resource' as const, icon: Sparkles, title: 'Star Resource', id: s.resource?.id, name: s.resource ? nameOf(s.resource.id) : 'Not picked yet', stat: s.resource ? `${s.resource.row.onTime}% of tasks on time` : '', bg: 'from-[#0E9F6E] via-[#0B7F5B] to-[#065F46]' },
+    { key: 'project' as const, icon: Trophy, title: 'Project of the Month', id: undefined, name: s.project?.name ?? 'Not picked yet', stat: s.project ? `${s.project.month.meetings ?? 0} meetings booked` : '', bg: 'from-[#F59E0B] via-[#D97706] to-[#B45309]' },
+    { key: 'pm' as const, icon: Crown, title: 'Star Project Manager', id: s.pm?.id, name: s.pm ? nameOf(s.pm.id) : 'Not picked yet', stat: s.pm ? `${s.pm.row.onTime}% of tasks on time` : '', bg: 'from-[#1D3FA0] via-[#2747C9] to-[#4F46E5]' },
   ];
 
   const person = open === 'resource' ? s.resource : open === 'pm' ? s.pm : undefined;
-  const days = person ? dailyHistory(person, 14) : [];
+  const series = person ? personSeries({ tasks, daily }, person.id, 'week', 'onTime', 8) : [];
   let body: ReactNode = null;
   if (open === 'project' && s.project) {
     const p = s.project;
@@ -103,13 +114,13 @@ export function Spotlights() {
       <div className="space-y-4">
         <div className="flex items-center gap-3"><Avatar id={person.id} size="lg" /><div><p className="text-lg font-bold">{nameOf(person.id)}</p><p className="text-sm text-muted">{person.title}</p></div></div>
         <div className="grid grid-cols-3 gap-2 text-center">
-          {[['On time this week', `${toOnTime(latest(person.history))}%`], ['Best week', `${toOnTime(Math.max(...person.history))}%`], ['Tasks approved', done]].map(([l, v]) => (
+          {[['On time this month', `${person.row.onTime}%`], ['Tasks done this month', person.row.tasks], ['Tasks approved', done]].map(([l, v]) => (
             <div key={l as string} className="rounded-xl bg-surface-2 p-3"><p className="text-xl font-bold">{v}</p><p className="text-xs text-muted">{l}</p></div>
           ))}
         </div>
-        <p className="text-xs font-semibold text-muted">Tasks finished on time, last two weeks</p>
+        <p className="text-xs font-semibold text-muted">Tasks finished on time, last eight weeks</p>
         <div className="flex h-20 items-end gap-1">
-          {days.map((d) => <div key={d.date} title={`${d.date}: ${d.onTime}% on time`} className="flex-1 rounded-t bg-accent/70" style={{ height: `${d.onTime}%` }} />)}
+          {series.map((d) => <div key={d.key} title={`${d.title}: ${d.value == null ? 'no timed tasks' : `${d.value}% on time`}`} className="flex-1 rounded-t bg-accent/70" style={{ height: `${d.value ?? 0}%` }} />)}
         </div>
       </div>
     );
@@ -171,80 +182,189 @@ export function ProjectBlock({ color, title, meta, children }: { color: string; 
   );
 }
 
-const fmtD = (d: string) => new Date(d + 'T00:00').toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
-const addD = (d: string, n: number) => { const x = new Date(d + 'T00:00'); x.setDate(x.getDate() + n); return `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}-${String(x.getDate()).padStart(2, '0')}`; };
+// ---------------------------------------------------------------------------------------------
+// Project progress: bar-chart list against targets (weekly / monthly), week dropdowns
+// ---------------------------------------------------------------------------------------------
 
-/** "Week 6 · 5 Oct – 9 Oct" counted from the project's start date. */
-function weekLabel(p: Project, start: string, current: boolean) {
-  const s0 = new Date(p.startDate + 'T00:00');
-  s0.setDate(s0.getDate() - ((s0.getDay() + 6) % 7));
-  const n = Math.round((new Date(start + 'T00:00').getTime() - s0.getTime()) / (7 * 86_400_000)) + 1;
-  return `Week ${Math.max(1, n)} · ${fmtD(start)} – ${fmtD(addD(start, 4))}${current ? ' (this week)' : ''}`;
+const relWeek = (ws: string) => (ws === weekStart(0) ? 'this week' : ws === weekStart(1) ? 'next week' : ws === weekStart(-1) ? 'last week' : '');
+
+export interface WeekOption { start: string; n: number; label: string; when: 'past' | 'current' | 'future'; planned: boolean }
+
+/**
+ * The project's weeks for a dropdown, numbered from the project start: "Week 3 · 19 Oct to 23 Oct (next week)".
+ * 'plan' lists every week from the start to the end (and at least 4 weeks ahead);
+ * 'progress' leaves out past weeks that have nothing recorded.
+ */
+export function weekOptions(p: Project, mode: 'plan' | 'progress' = 'plan'): WeekOption[] {
+  const cur = weekStart(0);
+  return projectWeeks(p)
+    .filter((w) => mode === 'plan' || w.start >= cur || p.pastWeeks.some((x) => x.start === w.start) || !!p.weekPlans?.[w.start])
+    .map((w) => {
+      const rel = relWeek(w.start);
+      return { start: w.start, n: w.n, when: w.start < cur ? 'past' : w.start === cur ? 'current' : 'future', planned: !!p.weekPlans?.[w.start], label: `${w.label}${rel ? ` (${rel})` : ''}` };
+    });
 }
-function monthLabel(p: Project, m: string, current: boolean) {
-  const s = p.startDate.slice(0, 7);
-  const [y0, m0] = s.split('-').map(Number);
-  const [y, mm] = m.split('-').map(Number);
-  const n = (y - y0) * 12 + (mm - m0) + 1;
-  return `Month ${Math.max(1, n)} · ${new Date(m + '-01T00:00').toLocaleDateString(undefined, { month: 'long', year: 'numeric' })}${current ? ' (this month)' : ''}`;
+
+function monthOptions(p: Project): { key: string; label: string }[] {
+  const cur = day(0).slice(0, 7);
+  const start = p.startDate.slice(0, 7);
+  const [y0, m0] = start.split('-').map(Number);
+  const keys = [...new Set([cur, ...p.pastMonths.map((m) => m.month).filter((m) => m >= start && m < cur)])].sort();
+  return keys.map((m) => {
+    const [y, mm] = m.split('-').map(Number);
+    const n = Math.max(1, (y - y0) * 12 + (mm - m0) + 1);
+    return { key: m, label: `Month ${n} · ${new Date(y, mm - 1, 1).toLocaleDateString(undefined, { month: 'long', year: 'numeric' })}${m === cur ? ' (this month)' : ''}` };
+  });
+}
+
+export type ProgressTone = 'mint' | 'sky' | 'butter' | 'coral' | 'grey';
+/** Colour by % done: 100+ green, 70+ blue, 40+ yellow, below that red. */
+export const progressTone = (pct: number | null): ProgressTone => (pct == null ? 'grey' : pct >= 100 ? 'mint' : pct >= 70 ? 'sky' : pct >= 40 ? 'butter' : 'coral');
+const FILL: Record<ProgressTone, string> = { mint: 'bg-mint-strong', sky: 'bg-sky-strong', butter: 'bg-butter-strong', coral: 'bg-coral-strong', grey: 'bg-grey-strong' };
+const BADGE: Record<ProgressTone, string> = { mint: 'bg-mint text-mint-ink', sky: 'bg-sky text-sky-ink', butter: 'bg-butter text-butter-ink', coral: 'bg-coral text-coral-ink', grey: 'bg-grey text-grey-ink' };
+
+/** A thin progress track coloured by tone, with an optional "expected by today" tick. */
+export function ProgressTrack({ pct, tone, expected, className }: { pct: number; tone: ProgressTone; expected?: number; className?: string }) {
+  return (
+    <div className={cx('relative h-2.5 w-full rounded-full bg-surface-2 ring-1 ring-inset ring-line/60', className)} role="progressbar" aria-valuenow={Math.round(pct)} aria-valuemin={0} aria-valuemax={100}>
+      <div className={cx('h-full rounded-full transition-all duration-500', FILL[tone])} style={{ width: `${Math.min(100, Math.max(0, pct))}%` }} />
+      {expected != null && <span className="absolute -inset-y-1 w-0.5 rounded bg-ink/40" style={{ left: `${Math.min(100, expected)}%` }} title="Where you would expect to be by the end of today" />}
+    </div>
+  );
+}
+
+export interface ProgressItem { id: string; label: string; value: number; target?: number; auto?: number }
+
+/** Bar-chart list: one row per number with its label, value / target, % done and a bar coloured by progress. */
+export function ProgressBars({ items, compact, expected, planned }: { items: ProgressItem[]; compact?: boolean; expected?: number; planned?: boolean }) {
+  return (
+    <ul className="space-y-3" aria-label="Progress against targets">
+      {items.map((m) => {
+        const pct = m.target ? Math.round((m.value / m.target) * 100) : null;
+        const tone = planned ? 'grey' : progressTone(pct);
+        return (
+          <li key={m.id} data-metric={m.label} title={m.auto ? `${m.auto} counted automatically from submitted tasks and end-of-day updates` : undefined}
+            className={cx('grid grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-x-3 gap-y-1.5', !compact && 'sm:grid-cols-[minmax(0,11rem)_minmax(0,1fr)_7.5rem_4.25rem]')}>
+            <span className="truncate text-sm font-semibold">{m.label}</span>
+            <ProgressTrack pct={pct ?? 0} tone={tone} expected={planned ? undefined : expected} className={cx('col-span-3 row-start-2', !compact && 'sm:col-span-1 sm:col-start-2 sm:row-start-1')} />
+            <span className="text-right text-sm tabular-nums">
+              {planned ? <span className="text-muted">target <b className="text-ink">{m.target ?? 0}</b></span> : <><b className="text-base text-ink">{m.value}</b>{m.target ? <span className="text-muted"> / {m.target}</span> : null}</>}
+            </span>
+            <span className={cx('justify-self-end whitespace-nowrap rounded-full px-2 py-0.5 text-[11px] font-bold tabular-nums', BADGE[tone])}>
+              {planned ? 'Planned' : pct == null ? 'No target' : `${pct}%`}
+            </span>
+          </li>
+        );
+      })}
+    </ul>
+  );
 }
 
 /** One number as a tile: big value, target, and a bar coloured by progress. */
 export function MetricTile({ label, value, target, auto }: { label: string; value: number; target?: number; auto?: number }) {
   const pct = target ? Math.round((value / target) * 100) : null;
-  const tone = pct == null ? 'sky' : pct >= 100 ? 'mint' : pct >= 70 ? 'sky' : 'butter';
+  const tone = progressTone(pct);
   return (
     <div className="rounded-2xl border border-line bg-surface p-3 shadow-soft">
       <p className="truncate text-[11px] font-bold uppercase tracking-wide text-muted" title={label}>{label}</p>
       <p className="mt-1 flex flex-wrap items-baseline gap-1">
         <span className="text-2xl font-extrabold leading-none">{value}</span>
         {target ? <span className="text-sm text-muted">/ {target}</span> : null}
-        {pct != null && <span className={cx('ml-auto rounded-full px-2 py-0.5 text-[11px] font-bold', pct >= 100 ? 'bg-mint text-mint-ink' : pct >= 70 ? 'bg-sky text-sky-ink' : 'bg-butter text-butter-ink')}>{pct}%</span>}
+        {pct != null && <span className={cx('ml-auto rounded-full px-2 py-0.5 text-[11px] font-bold', BADGE[tone])}>{pct}%</span>}
       </p>
-      <div className="mt-2"><Bar value={value} max={target ?? 0} tone={tone} /></div>
+      <ProgressTrack className="mt-2 h-2" pct={pct ?? 0} tone={tone} />
       {auto ? <p className="mt-1 truncate text-[10px] text-accent-ink">+{auto} auto from tasks</p> : null}
     </div>
   );
 }
 
-/** Progress against targets for any week or month of the project; filter to one number. */
+/** Share of this week's (or month's) working days that are over by the end of today, in %. */
+function expectedShare(kind: 'week' | 'month'): number {
+  const today = day(0);
+  if (kind === 'week') {
+    const mon = weekStart(0);
+    return Math.round((workingDaysBetween(mon, today).length / 5) * 100);
+  }
+  const first = `${today.slice(0, 7)}-01`;
+  const d = new Date(+today.slice(0, 4), +today.slice(5, 7), 0);
+  const last = `${today.slice(0, 7)}-${String(d.getDate()).padStart(2, '0')}`;
+  return Math.round((workingDaysBetween(first, today).length / Math.max(1, workingDaysBetween(first, last).length)) * 100);
+}
+
+/**
+ * Project progress against targets as a bar-chart list (or tiles) for any week or month.
+ * Weeks use that week's saved plan, falling back to the default weekly target.
+ */
 export function TargetsTable({ p, compact }: { p: Project; compact?: boolean }) {
   const tasks = useStore((s) => s.tasks);
   const daily = useStore((s) => s.daily);
   const thisWeek = weekStart(0);
   const thisMonth = day(0).slice(0, 7);
-  const weeks: (PeriodKey & { label: string })[] = [{ kind: 'week', key: thisWeek, label: weekLabel(p, thisWeek, true) }, ...p.pastWeeks.map((w) => ({ kind: 'week' as const, key: w.start, label: weekLabel(p, w.start, false) }))];
-  const months: (PeriodKey & { label: string })[] = [{ kind: 'month', key: thisMonth, label: monthLabel(p, thisMonth, true) }, ...p.pastMonths.map((m) => ({ kind: 'month' as const, key: m.month, label: monthLabel(p, m.month, false) }))];
+  const weeks = useMemo(() => weekOptions(p, 'progress'), [p]);
+  const months = useMemo(() => monthOptions(p), [p]);
   const [kind, setKind] = useState<'week' | 'month'>('week');
-  const [idx, setIdx] = useState(0);
+  const [wk, setWk] = useState(thisWeek);
+  const [mo, setMo] = useState(thisMonth);
   const [only, setOnly] = useState('all');
-  const list = kind === 'week' ? weeks : months;
-  const period = list[Math.min(idx, list.length - 1)];
-  const { counts, auto } = useMemo(() => projectCounts(p, tasks, daily, period), [p, tasks, daily, period]);
-  const tgt = kind === 'week' ? p.weekTarget : p.monthTarget;
-  const locked = kind === 'week' ? p.weekLocked : p.monthLocked;
-  const rows = p.metrics.filter((m) => inPeriod(m, kind) && (only === 'all' || m.id === only));
-  const sel = 'focus-ring rounded-xl border border-line bg-surface px-3 py-1.5 text-sm';
+  const [view, setView] = useState<'bars' | 'tiles'>('bars');
+  const weekKey = weeks.some((w) => w.start === wk) ? wk : (weeks.find((w) => w.when === 'current') ?? weeks[0])?.start ?? thisWeek;
+  const monthKey = months.some((m) => m.key === mo) ? mo : thisMonth;
+  const key = kind === 'week' ? weekKey : monthKey;
+  const { counts, auto } = useMemo(() => projectCounts(p, tasks, daily, { kind, key }), [p, tasks, daily, kind, key]);
+  const plan = kind === 'week' ? p.weekPlans?.[weekKey] : undefined;
+  const me = useStore((s) => s.me);
+  const manager = canManage(p, me);
+  const draftWeek = kind === 'week' && !plan && !p.weekLocked;
+  // Weeks always use the saved plan or the default weekly target; a default that is not locked yet is a draft only managers see.
+  const tgt = kind === 'week' ? (draftWeek && !manager ? undefined : weekTargetFor(p, weekKey)) : p.monthLocked ? p.monthTarget : undefined;
+  const future = kind === 'week' && weekKey > thisWeek;
+  const current = kind === 'week' ? weekKey === thisWeek : monthKey === thisMonth;
+  const expected = current ? expectedShare(kind) : undefined;
+  const metrics = p.metrics.filter((m) => inPeriod(m, kind));
+  const items: ProgressItem[] = metrics.filter((m) => only === 'all' || m.id === only)
+    .map((m) => ({ id: m.id, label: m.label, value: counts[m.id] ?? 0, target: tgt?.[m.id] || undefined, auto: auto[m.id] }));
+  const withTarget = items.filter((i) => i.target);
+  const avg = withTarget.length ? Math.round(withTarget.reduce((s, i) => s + Math.min(100, (i.value / i.target!) * 100), 0) / withTarget.length) : null;
+  const sel = 'focus-ring min-w-0 max-w-full rounded-xl border border-line bg-surface px-3 py-1.5 text-sm text-ink';
+  const seg = (on: boolean) => cx('focus-ring rounded-full px-3.5 py-1 text-sm font-semibold', on ? 'bg-accent text-accent-on' : 'text-muted hover:text-ink');
   return (
-    <div className="space-y-4">
+    <div className="space-y-4" data-testid="project-progress">
       <div className="flex flex-wrap items-center gap-2">
-        <div className="flex rounded-full bg-surface-2 p-1">
+        <div className="flex rounded-full bg-surface-2 p-1" role="group" aria-label="Weekly or monthly">
           {(['week', 'month'] as const).map((k) => (
-            <button key={k} onClick={() => { setKind(k); setIdx(0); }} className={cx('focus-ring rounded-full px-4 py-1 text-sm font-semibold', kind === k ? 'bg-accent text-accent-on' : 'text-muted')}>{k === 'week' ? 'Weekly' : 'Monthly'}</button>
+            <button key={k} aria-pressed={kind === k} onClick={() => setKind(k)} className={seg(kind === k)}>{k === 'week' ? 'Weekly' : 'Monthly'}</button>
           ))}
         </div>
-        <select aria-label="Period" className={sel} value={idx} onChange={(e) => setIdx(+e.target.value)}>
-          {list.map((o, i) => <option key={o.key} value={i}>{o.label}</option>)}
-        </select>
+        {kind === 'week' ? (
+          <select aria-label="Week" className={sel} value={weekKey} onChange={(e) => setWk(e.target.value)}>
+            {weeks.map((w) => <option key={w.start} value={w.start}>{w.label}{w.planned ? ' · plan saved' : ''}</option>)}
+          </select>
+        ) : (
+          <select aria-label="Month" className={sel} value={monthKey} onChange={(e) => setMo(e.target.value)}>
+            {months.map((m) => <option key={m.key} value={m.key}>{m.label}</option>)}
+          </select>
+        )}
         <select aria-label="Filter numbers" className={sel} value={only} onChange={(e) => setOnly(e.target.value)}>
           <option value="all">All numbers</option>
-          {p.metrics.filter((m) => inPeriod(m, kind)).map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
+          {metrics.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
         </select>
-        {!locked && <Chip tone="butter">{kind === 'week' ? 'Weekly' : 'Monthly'} targets not locked yet</Chip>}
       </div>
-      {rows.length === 0 ? <p className="text-sm text-muted">Nothing tracked for this period.</p> : (
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted">
+        {kind === 'week' && (plan ? <Chip tone="mint">Using this week's saved plan</Chip> : tgt && draftWeek ? <Chip tone="butter">Draft target</Chip> : tgt ? <Chip tone="grey">Using the default weekly target</Chip> : null)}
+        {!tgt && <Chip tone="butter">{kind === 'week' ? 'No weekly target saved for this week yet' : 'Monthly targets not locked yet'}</Chip>}
+        {future ? <span>Starts {fmtDay(weekKey)}: these are the planned targets.</span> : avg != null && <span><b className="text-ink">{avg}%</b> of target on average across {withTarget.length} number{withTarget.length === 1 ? '' : 's'}</span>}
+        {expected != null && !future && tgt && <span className="inline-flex items-center gap-1"><span className="inline-block h-3 w-0.5 rounded bg-ink/40" /> expected by today: {expected}%</span>}
+        <div className="ml-auto flex rounded-xl bg-surface-2 p-0.5" role="group" aria-label="Chart style">
+          {([['bars', Rows3, 'Bar chart view'], ['tiles', LayoutGrid, 'Tiles view']] as const).map(([k, Icon, l]) => (
+            <button key={k} aria-label={l} title={l} aria-pressed={view === k} onClick={() => setView(k)} className={cx('focus-ring rounded-lg p-1.5', view === k ? 'bg-surface text-accent-ink shadow-soft' : 'text-muted hover:text-ink')}><Icon size={15} /></button>
+          ))}
+        </div>
+      </div>
+      {items.length === 0 ? <p className="text-sm text-muted">Nothing tracked for this period.</p> : view === 'bars' ? (
+        <ProgressBars items={items} compact={compact} expected={expected} planned={future} />
+      ) : (
         <div className={cx('grid grid-cols-2 gap-3', compact ? 'sm:grid-cols-2 2xl:grid-cols-3' : 'md:grid-cols-3 xl:grid-cols-4')}>
-          {rows.map((m) => <MetricTile key={m.id} label={m.label} value={counts[m.id] ?? 0} target={locked ? tgt[m.id] || undefined : undefined} auto={auto[m.id]} />)}
+          {items.map((m) => <MetricTile key={m.id} label={m.label} value={m.value} target={m.target} auto={m.auto} />)}
         </div>
       )}
     </div>
@@ -299,7 +419,7 @@ export function TaskCalendar({ tasks, who }: { tasks: Task[]; who: 'assignee' | 
         {list.length === 0 ? <p className="py-6 text-sm text-muted">No tasks on this day.</p> : (
           <ul className="max-h-72 divide-y divide-line overflow-y-auto">
             {list.map((t) => (
-              <li key={t.id} className="flex items-center gap-3 py-2 text-sm">
+              <li key={t.id} className="flex items-start gap-3 py-2 text-sm" data-testid="task-log-row">
                 <Avatar id={who === 'assigner' ? t.assigneeId : t.assignedById} size="sm" />
                 <span className="min-w-0 flex-1">
                   <span className="first-letter:uppercase">{t.title}</span>
@@ -307,8 +427,12 @@ export function TaskCalendar({ tasks, who }: { tasks: Task[]; who: 'assignee' | 
                     {who === 'assigner' ? `to ${first(t.assigneeId)}` : `from ${first(t.assignedById)}`} · target {fmtMin(t.targetMinutes)}
                     {t.minutes != null && ` · took ${fmtMin(t.minutes)}`}{t.doneQty != null && ` · ${t.doneQty}/${t.qty} ${t.unit}`}
                   </span>
+                  <TaskHistory task={t} className="mt-1" />
                 </span>
-                <Chip tone={STATUS[t.status].tone}>{STATUS[t.status].label}</Chip>
+                <span className="flex shrink-0 flex-col items-end gap-1">
+                  <Chip tone={STATUS[t.status].tone}>{STATUS[t.status].label}</Chip>
+                  <ResubmitChip task={t} />
+                </span>
               </li>
             ))}
           </ul>
