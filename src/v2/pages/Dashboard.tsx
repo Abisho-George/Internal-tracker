@@ -4,6 +4,7 @@ import { toast } from '@/components';
 import { day, isLeadRole, PEOPLE } from '../data';
 import { first, onTimeRate, useStore, nameOf } from '../store';
 import { Link } from 'react-router-dom';
+import { Greeting } from './Greeting';
 import { Avatar, Btn, Card, Chip, H2, PROJECT_COLORS, ago, safe } from '../ui';
 import { ReviewRow, TaskRow } from './TaskCard';
 import { Timeline } from './Timeline';
@@ -71,26 +72,18 @@ export function TeamDashboard() {
   const dayPlan = daily[`${me}|${today}`]?.plan ?? [];
 
   return (
-    <div className="space-y-6">
-      <div className="flex flex-wrap items-end justify-between gap-2">
-        <div>
-          <h1 className="text-2xl font-bold">Good to see you, {first(me)}</h1>
-          <p className="text-sm text-muted">{new Date().toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' })}</p>
-        </div>
-        {rate && <Chip tone="sky">{rate.onTime} of {rate.total} tasks on time</Chip>}
-      </div>
+    <div className="space-y-5">
+      <Greeting extra={rate && <Chip tone="sky">{rate.onTime} of {rate.total} tasks on time</Chip>} />
 
       <Spotlights />
 
       <Card>
         <H2 right={<span className="text-xs text-muted">{carried > 0 && `${carried} carried over from yesterday`}</span>}>My day</H2>
         <DayTracker blocks={dayPlan} loggedMinutes={logged} />
-        <Link to="/daily" className="focus-ring mt-3 inline-block rounded-lg text-sm font-semibold text-accent-ink hover:underline">{dayPlan.length ? 'Edit day plan →' : 'Plan your day in Daily update →'}</Link>
+        <Link to="/daily" className="focus-ring mt-3 inline-block rounded-lg text-sm font-semibold text-accent-ink hover:underline">{dayPlan.length ? 'Edit day plan →' : 'Plan your day in Tasks update →'}</Link>
       </Card>
 
       <ReviewQueue />
-
-      <ReviewLog />
 
       <div className="space-y-5">
         {plan.length === 0 && <Card><p className="py-6 text-center text-muted">No projects or tasks for today yet ☀️</p></Card>}
@@ -103,13 +96,15 @@ export function TeamDashboard() {
           );
         })}
       </div>
+
+      <ReviewLog />
     </div>
   );
 }
 
 /** Read-only merged view for managers and founders. */
 export function LeadDashboard() {
-  const { me, projects, tasks, decideProject } = useStore();
+  const { projects, tasks, decideProject } = useStore();
   const pending = projects.filter((p) => p.status === 'pending');
   const active = projects.filter((p) => p.status === 'active');
   const today = day(0);
@@ -117,11 +112,8 @@ export function LeadDashboard() {
   const team = PEOPLE.filter((p) => !isLeadRole(p.role)).sort((a, b) => a.name.localeCompare(b.name));
 
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold">Good to see you, {first(me)}</h1>
-        <p className="text-sm text-muted">Everything across Lead Strategus, at a glance. Targets appear once project managers lock them.</p>
-      </div>
+    <div className="space-y-5">
+      <Greeting />
       <Spotlights />
 
       {pending.length > 0 && (
@@ -144,7 +136,6 @@ export function LeadDashboard() {
       )}
 
       <ReviewQueue />
-      <ReviewLog />
 
       <div className="grid gap-5 lg:grid-cols-2">
         {active.map((p, i) => (
@@ -152,7 +143,7 @@ export function LeadDashboard() {
             <div className="space-y-4 p-4">
               <Timeline project={p} />
               
-              <TargetsTable p={p} />
+              <TargetsTable p={p} compact />
             </div>
           </ProjectBlock>
         ))}
@@ -192,6 +183,7 @@ export function LeadDashboard() {
           </ul>
         </Card>
       </div>
+      <ReviewLog />
     </div>
   );
 }

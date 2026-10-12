@@ -1,9 +1,10 @@
 import { Component, useEffect, useRef, useState, type ReactNode } from 'react';
 import { HashRouter, NavLink, Navigate, Route, Routes, useNavigate } from 'react-router-dom';
-import { Bell, ClipboardList, FolderKanban, LayoutDashboard, MessageCircle, Moon, RotateCcw, NotebookPen, Settings, Sun, UserCircle, Users } from 'lucide-react';
+import { Bell, ClipboardList, FolderKanban, LayoutDashboard, MessageCircle, RotateCcw, NotebookPen, Palette, Settings, UserCircle, Users } from 'lucide-react';
 import { Toaster, toast } from '@/components';
 import { isLeadRole, PEOPLE, PERSONAS } from './data';
 import { nameOf, push, useStore } from './store';
+import { FunLayer, Mascot, ThemeApplier, ThemeMenu } from './theme';
 import { Avatar, Btn, Card, cx } from './ui';
 import { LeadDashboard, TeamDashboard } from './pages/Dashboard';
 import Projects from './pages/Projects';
@@ -50,53 +51,48 @@ function useLiveNotices() {
 function Shell() {
   const { me, notices, projects, setMe, reset } = useStore();
   const person = PEOPLE.find((p) => p.id === me)!;
-  // Theme and accent are saved per person on their profile.
-  const prof = useStore((st) => st.profiles[me]);
-  const dark = !!prof?.dark;
-  const accent = prof?.accent ?? 'brand';
   const [chatOpen, setChatOpen] = useState(false);
   const [setupOpen, setSetupOpen] = useState(false);
   const chatUnread = notices.filter((n) => n.to === me && !n.read && n.text.includes('anonymous')).length;
   const nav = useNavigate();
   useLiveNotices();
-  useEffect(() => {
-    document.documentElement.dataset.theme = dark ? 'dark' : 'light';
-    document.documentElement.dataset.accent = accent;
-  }, [dark, accent]);
+  const [themeOpen, setThemeOpen] = useState(false);
 
   const lead = isLeadRole(person.role);
   // Resources and PMs share one view; Assign appears once they own an approved project.
   const ownsProject = projects.some((p) => p.pmId === me && p.status === 'active');
   const navItems: NavItem[] = [...(lead ? [DASH, PROJECTS, ASSIGN, PEOPLE_NAV] : ownsProject ? [DASH, PROJECTS, ASSIGN] : [DASH, PROJECTS]), PROFILE];
   const rail = [
-    { to: '/daily', label: 'Daily update', icon: NotebookPen, badge: 0 },
+    { to: '/daily', label: 'Tasks update', icon: NotebookPen, badge: 0 },
     ...navItems.map((n) => ({ ...n, badge: 0 })),
   ];
 
   return (
-    <div className="flex min-h-screen bg-bg">
-      <nav className="sticky top-0 flex h-screen w-[76px] shrink-0 flex-col items-center gap-1 border-r border-line bg-surface py-3">
+    <div className="relative flex min-h-screen bg-bg">
+      <ThemeApplier />
+      <FunLayer />
+      <nav className="sticky top-0 z-10 flex h-screen w-[76px] shrink-0 flex-col items-center gap-1 border-r border-line bg-surface py-3">
         <img src="./logo.jpg" alt="Lead Strategus" className="mb-3 h-11 w-11 rounded-xl bg-white object-contain p-0.5" />
         {rail.map((r) => (
           <NavLink
             key={r.to}
             to={r.to}
             end
-            className={({ isActive }) => cx('focus-ring relative flex w-16 flex-col items-center gap-0.5 rounded-xl py-2 text-[11px] font-semibold', isActive ? 'bg-accent-soft text-accent-ink' : 'text-muted hover:bg-surface-2')}
+            className={({ isActive }) => cx('focus-ring relative flex w-16 flex-col items-center justify-center gap-1 rounded-xl px-1 py-2 text-center text-[11px] font-semibold leading-tight', isActive ? 'bg-accent-soft text-accent-ink' : 'text-muted hover:bg-surface-2')}
           >
-            <r.icon size={20} />
-            {r.label}
+            <r.icon size={20} className="shrink-0" />
+            <span className="block w-full text-center">{r.label}</span>
             {r.badge > 0 && <span className="absolute right-2 top-1 rounded-full bg-coral-strong px-1.5 text-[10px] font-bold text-white">{r.badge}</span>}
           </NavLink>
         ))}
         <div className="mt-auto flex flex-col items-center gap-2">
           {lead && <button aria-label="Onboard a new project" title="Onboard a new project" className="focus-ring rounded-xl p-2 text-muted hover:bg-surface-2" onClick={() => setSetupOpen(true)}><Settings size={18} /></button>}
-          <button aria-label="Toggle dark mode" className="focus-ring rounded-xl p-2 text-muted hover:bg-surface-2" onClick={() => useStore.getState().setProfile(me, { dark: !dark })}>{dark ? <Sun size={18} /> : <Moon size={18} />}</button>
+          <button aria-label="Theme" title="Theme" className="focus-ring rounded-xl p-2 text-muted hover:bg-surface-2" onClick={() => setThemeOpen(true)}><Palette size={18} /></button>
           <button aria-label="Reset demo data" title="Reset demo data" className="focus-ring rounded-xl p-2 text-muted hover:bg-surface-2" onClick={() => { reset(); toast({ title: 'Demo data reset', tone: 'info' }); }}><RotateCcw size={18} /></button>
         </div>
       </nav>
 
-      <div className="min-w-0 flex-1">
+      <div className="relative z-[1] min-w-0 flex-1">
         <header className="sticky top-0 z-10 flex items-center justify-between gap-3 border-b border-line bg-surface/90 px-6 py-3 backdrop-blur">
           <div className="flex items-center gap-2"><p className="text-sm font-extrabold tracking-tight">Lead Strategus</p><span className="hidden text-xs text-muted sm:inline">Tracker</span></div>
           <label className="flex items-center gap-2 rounded-full bg-surface-2 py-1 pl-1 pr-2 text-xs">
@@ -143,6 +139,8 @@ function Shell() {
         </button>
       </div>
       <ProjectSetup open={setupOpen} onClose={() => setSetupOpen(false)} />
+      <ThemeMenu open={themeOpen} onClose={() => setThemeOpen(false)} />
+      <Mascot />
       <Toaster />
     </div>
   );

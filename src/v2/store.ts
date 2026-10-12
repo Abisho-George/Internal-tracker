@@ -10,7 +10,25 @@ export interface Notice { id: string; to: string; text: string; at: string; read
 export interface Conversation { id: string; name: string; memberIds: string[]; group: boolean }
 export interface ChatMsg { id: string; convId: string; alias: string; text: string; at: string }
 
-export interface Profile { name?: string; emoji?: string; photo?: string; accent?: string; dark?: boolean }
+export type ThemeId = 'pro' | 'dark' | 'cartoon' | 'comic' | 'candy' | 'space' | 'custom';
+export interface CustomTheme {
+  base: 'light' | 'dark';
+  accent: string; // hex
+  background: 'plain' | 'dots' | 'confetti' | 'clouds' | 'stars';
+  font: 'jakarta' | 'fredoka' | 'comic' | 'bangers';
+  cards: 'classic' | 'cartoon' | 'bubbly';
+  nowEmoji: string;
+  blocks: 'solid' | 'striped' | 'candy';
+}
+export const DEFAULT_CUSTOM: CustomTheme = { base: 'light', accent: '#7C3AED', background: 'confetti', font: 'fredoka', cards: 'bubbly', nowEmoji: '🏃', blocks: 'candy' };
+export interface Profile {
+  name?: string; emoji?: string; photo?: string; accent?: string; dark?: boolean;
+  theme?: ThemeId; custom?: CustomTheme; mascot?: boolean; fun?: boolean;
+}
+
+/** Weekly targets & end-of-week update, keyed by `${personId}|${weekStart}`. */
+export interface WeeklyUpdate { targetsNote: string; targetsCustom: CustomRow[]; targetsAt?: string; eowNote: string; eowCustom: CustomRow[]; eowAt?: string }
+export const emptyWeekly = (): WeeklyUpdate => ({ targetsNote: '', targetsCustom: [], eowNote: '', eowCustom: [] });
 
 interface Data {
   me: string;
@@ -23,6 +41,7 @@ interface Data {
   aliases: Record<string, string>;
   /** Keyed by `${personId}|${yyyy-MM-dd}`. */
   daily: Record<string, DailyUpdate>;
+  weekly: Record<string, WeeklyUpdate>;
 }
 
 export interface AssignInput {
@@ -72,6 +91,9 @@ interface Actions {
   assignMany: (items: AssignInput[]) => void;
   forwardReview: (taskId: string, toId: string, note?: string) => void;
   saveDaily: (personId: string, date: string, patch: Partial<DailyUpdate>) => void;
+  saveWeekly: (personId: string, weekStart: string, patch: Partial<WeeklyUpdate>) => void;
+  updateProject: (projectId: string, patch: Partial<Pick<Project, 'name' | 'client' | 'description' | 'startDate' | 'endDate' | 'hours' | 'standards'>>) => void;
+  setWeekValue: (projectId: string, metric: string, base: number) => void;
   setMetricPeriods: (projectId: string, metricId: string, periods: ('week' | 'month')[]) => void;
   setProfile: (id: string, patch: Profile) => void;
   editTask: (id: string, p: { qty: number; targetMinutes: number; title: string }) => void;
@@ -84,7 +106,7 @@ interface Actions {
   renameMetric: (projectId: string, metricId: string, label: string) => void;
   addMeeting: (projectId: string, m: { company: string; contact: string; date: string; time: string }) => void;
   postUpdate: (projectId: string, text: string) => void;
-  proposeProject: (p: { name: string; client: string; description: string; startDate: string; endDate: string; hours: Record<string, number> }) => string;
+  proposeProject: (p: { name: string; client: string; description: string; startDate: string; endDate: string; hours: Record<string, number>; standards?: Project['standards'] }) => string;
   decideProject: (id: string, approve: boolean) => void;
   readAll: () => void;
   readNotice: (id: string) => void;
@@ -133,6 +155,7 @@ function seed(): Data {
     ],
     aliases: {},
     daily: seedDaily(),
+    weekly: seedWeekly(),
   };
 }
 
@@ -268,6 +291,28 @@ export const useStore = create<Data & Actions>()(
           notify(toId, `${first(get().me)} forwarded ${first(t.assigneeId)}'s ${t.title} to you for review`);
           notify(t.assigneeId, `${first(get().me)} passed your ${t.title} to ${first(toId)} for review`);
         },
+        saveWeekly: (pid, ws, patchW) => {
+          const key = `${pid}|${ws}`;
+          set((s) => ({ weekly: { ...s.weekly, [key]: { ...(s.weekly[key] ?? emptyWeekly()), ...patchW } } }));
+        },
+        updateProject: (pid, patchP) => {
+          owns(pid);
+          if (patchP.name !== undefined && !patchP.name.trim()) throw new Error('Project name cannot be empty.');
+          if (patchP.startDate && patchP.endDate && patchP.endDate < patchP.startDate) throw new Error('End date must be after the start date.');
+          if (patchP.standards && Object.values(patchP.standards).some((v) => !(v > 0))) throw new Error('Standard times must be above zero.');
+          proj(pid, (x) => {
+            const hours = patchP.hours ?? x.hours;
+            const teamIds = patchP.hours ? [...new Set([...Object.keys(hours).filter((k) => hours[k] > 0), x.pmId])] : x.teamIds;
+            return { ...x, ...patchP, hours, teamIds };
+          });
+        },
+        setWeekValue: (pid, metric, base) => {
+          owns(pid);
+          proj(pid, (x) => {
+            const delta = base - (x.week[metric] ?? 0);
+            return { ...x, week: { ...x.week, [metric]: base }, month: { ...x.month, [metric]: Math.max(0, (x.month[metric] ?? 0) + delta) } };
+          });
+        },
         saveDaily: (pid, date, patchD) => {
           const key = `${pid}|${date}`;
           if (patchD.plan) {
@@ -331,7 +376,7 @@ export const useStore = create<Data & Actions>()(
           set((s) => ({
             projects: [...s.projects, {
               id, name: p.name.trim(), client: p.client.trim() || p.name.trim(), description: p.description.trim(), pmId: me,
-              status: lead ? 'active' : 'pending', teamIds, startDate: p.startDate, endDate: p.endDate, hours,
+              status: lead ? 'active' : 'pending', teamIds, startDate: p.startDate, endDate: p.endDate, hours, standards: p.standards,
               metrics: METRICS.map((m) => ({ ...m })), weekTarget: { ...ZERO }, monthTarget: { ...ZERO }, weekLocked: false, monthLocked: false,
               week: { ...ZERO }, month: { ...ZERO }, meetings: [], pastWeeks: [], pastMonths: [], updates: [],
             }],
@@ -372,7 +417,7 @@ export const useStore = create<Data & Actions>()(
     },
     {
       name: 'ls-tracker-v2',
-      version: 8,
+      version: 9,
       // Old or unreadable saved data falls back to a fresh demo instead of crashing.
       migrate: () => seed() as never,
       merge: (persisted, current) => {
@@ -514,12 +559,47 @@ function historyDaily(projects: Project[]): Record<string, DailyUpdate> {
   return out;
 }
 
+function seedWeekly(): Record<string, WeeklyUpdate> {
+  const ws = weekStartISO();
+  const last = new Date(ws + 'T00:00');
+  last.setDate(last.getDate() - 7);
+  const lw = `${last.getFullYear()}-${String(last.getMonth() + 1).padStart(2, '0')}-${String(last.getDate()).padStart(2, '0')}`;
+  const T = (label: string, qty: number) => ({ id: `w${label}${qty}`, label, qty });
+  const out: Record<string, WeeklyUpdate> = {};
+  const goals: Record<string, [string, string, [string, number][], [string, number][]]> = {
+    udhaya: ['300 personalised L1s across Northwind + Helios, BD prospect list.', 'Hit L1s, prospect list 80% done.', [['Meetings interest', 3], ['Case studies', 1]], [['Meetings interest', 4], ['Case studies', 1]]],
+    bharath: ['150 calls, 10 interested leads.', '142 calls, 11 interested — two demos booked.', [['Calls', 150], ['Interested leads', 10]], [['Calls', 142], ['Interested leads', 11]]],
+    sachi: ['Helios deck v3 + 200 L2 follow-ups.', 'Deck shipped, 180 L2s.', [['L2 follow-ups', 200], ['Deck versions', 1]], [['L2 follow-ups', 180], ['Deck versions', 1]]],
+    bheeshma: ['Book 4 Northwind meetings, clear review queue daily.', '4 meetings booked ✓', [['Meetings booked', 4]], [['Meetings booked', 4]]],
+    alok: ['Helios: 3 meetings, new CFO sequence live.', '2 meetings, sequence live.', [['Meetings booked', 3]], [['Meetings booked', 2]]],
+    abisho: ['BD: 20 agency founders contacted.', '24 contacted, 3 replies.', [['Founders contacted', 20]], [['Founders contacted', 24]]],
+    prajwal: ['Support Northwind + Helios, 200 emails.', '210 emails sent.', [['Emails', 200]], [['Emails', 210]]],
+  };
+  Object.entries(goals).forEach(([who, [tn, en, tc, ec]]) => {
+    out[`${who}|${lw}`] = { targetsNote: tn, targetsCustom: tc.map(([l, q]) => T(l, q)), targetsAt: new Date(lw + 'T10:15:00').toISOString(), eowNote: en, eowCustom: ec.map(([l, q]) => T(l, q)), eowAt: new Date(lw + 'T18:40:00').toISOString() };
+    if (who !== 'prajwal') out[`${who}|${ws}`] = { ...emptyWeekly(), targetsNote: tn, targetsCustom: tc.map(([l, q]) => T(l, q)), targetsAt: new Date(ws + 'T10:20:00').toISOString() };
+  });
+  return out;
+}
+
+/** Today's morning targets (and a few end-of-day reports) for the whole team. */
+function seedToday(): Record<string, DailyUpdate> {
+  const at = (h: number, m: number) => new Date(new Date().setHours(h, m, 0, 0)).toISOString();
+  const d = day(0);
+  return {
+    [`alok|${d}`]: { ...emptyDaily(), sodNote: 'Helios CFO sequence: L2 follow-ups + 2 calls.', sodTargets: { helios: { responses: 5, interest: 2 } }, sodCustom: [{ id: 'a1', label: 'CFO list review', qty: 1 }], sodAt: at(10, 7), eodNote: 'Good replies on L2s, one CFO wants a deck.', eodActuals: { helios: { responses: 6, interest: 1 } }, eodCustom: [{ id: 'a2', label: 'CFO list review', qty: 1 }], eodAt: at(18, 35) },
+    [`abisho|${d}`]: { ...emptyDaily(), sodNote: 'BD outreach to 15 agency founders.', sodTargets: { bd: { responses: 3, interest: 1, calls: 6 } }, sodAt: at(10, 2) },
+    [`prajwal|${d}`]: { ...emptyDaily(), sodNote: 'Emails for Northwind, WhatsApp batch for Helios.', sodTargets: { northwind: { responses: 3 }, helios: { responses: 2 } }, sodAt: at(10, 18), eodNote: 'Emails done; WhatsApp batch half — rest tomorrow.', eodActuals: { northwind: { responses: 4 }, helios: { responses: 1 } }, eodCustom: [{ id: 'p1', label: 'Helped Sachi with deck data', qty: 1 }], eodAt: at(18, 50) },
+  };
+}
+
 function seedDaily(): Record<string, DailyUpdate> {
   const y = day(-1);
   const at = (h: number, m: number) => new Date(new Date().setHours(h, m, 0, 0)).toISOString();
   const history = historyDaily(seedProjects());
   return {
     ...history,
+    ...seedToday(),
     [`udhaya|${day(0)}`]: {
       ...emptyDaily(),
       plan: [

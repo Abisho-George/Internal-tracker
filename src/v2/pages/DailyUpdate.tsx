@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useState } from 'react';
-import { CalendarDays, ChevronLeft, ChevronRight, Lock, Moon, Pencil, Plus, Star, Sunrise, Trash2, Wand2 } from 'lucide-react';
+import { CalendarDays, ChevronLeft, ChevronRight, Lock, Plus, Star, Trash2, Wand2 } from 'lucide-react';
 import { toast } from '@/components';
 import { day } from '../data';
 import { defaultPlan, emptyDaily, first, LUNCH, useStore, type CustomRow, type DayBlock, type ProjectNumbers } from '../store';
-import { Btn, Card, Chip, H2, cx, fmtMin, input, safe } from '../ui';
+import { Btn, Card, H2, cx, fmtMin, input, safe } from '../ui';
 import { colorOf, DayTracker } from './Widgets';
 import { CustomBlocksView, CustomRows, CustomRowsView, NumbersView } from './DailyViews';
+import { AutoTasks, EodIcon, SodIcon, SUBMITTED, TaskSummary, UpdateSection, WeeklySections } from './TaskUpdateSections';
 
 const TIMES = Array.from({ length: 19 }, (_, i) => `${String(10 + Math.floor(i / 2)).padStart(2, '0')}:${i % 2 ? '30' : '00'}`);
 /** Numbers that are already counted from submitted tasks — don't ask for them again at end of day. */
@@ -57,8 +58,6 @@ export default function DailyUpdate() {
   const [eodCustom, setEodCustom] = useState<CustomRow[]>(saved.eodCustom ?? []);
   const [editSod, setEditSod] = useState(false);
   const [editEod, setEditEod] = useState(false);
-  const sodLocked = !!saved.sodAt && !editSod;
-  const eodLocked = !!saved.eodAt && !editEod;
   // Reload the form when switching person or date.
   useEffect(() => {
     const d = useStore.getState().daily[`${me}|${date}`] ?? emptyDaily();
@@ -70,6 +69,8 @@ export default function DailyUpdate() {
   const openTasks = useMemo(() => tasks.filter((t) => t.assigneeId === me && (t.date === date || (t.date < date && t.status !== 'done'))), [tasks, me, date]);
   const plannedMin = plan.reduce((s, b) => s + (+b.end.slice(0, 2) * 60 + +b.end.slice(3) - (+b.start.slice(0, 2) * 60 + +b.start.slice(3))), 0);
   const isToday = date === day(0);
+  const dayTasks = useMemo(() => tasks.filter((t) => t.assigneeId === me && (t.date === date || (t.date < date && !SUBMITTED(t) && t.status !== 'done' && isToday))), [tasks, me, date, isToday]);
+  const doneToday = useMemo(() => tasks.filter((t) => t.assigneeId === me && t.date === date && SUBMITTED(t)), [tasks, me, date]);
   const upd = (id: string, p: Partial<DayBlock>) => setPlan((x) => x.map((b) => (b.id === id ? { ...b, ...p } : b)));
   const updC = (id: string, c: Partial<NonNullable<DayBlock['custom']>>) => setPlan((x) => x.map((b) => (b.id === id && b.custom ? { ...b, custom: { ...b.custom, ...c } } : b)));
   const addBlock = () => {
@@ -84,8 +85,8 @@ export default function DailyUpdate() {
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-bold">Daily update</h1>
-          <p className="text-sm text-muted">Plan your day in the morning, report back in the evening. Working hours 10am – 7pm.</p>
+          <h1 className="text-2xl font-bold">Tasks update</h1>
+          <p className="text-sm text-muted">Plan your day, then targets and updates fill themselves in from your tasks. Working hours 10am – 7pm, lunch 1–2pm.</p>
         </div>
         <div className="flex items-center gap-1 rounded-xl border border-line bg-surface p-1">
           <button aria-label="Previous day" className="focus-ring rounded-lg p-1.5 hover:bg-surface-2" onClick={() => setDate(shift(date, -1))}><ChevronLeft size={16} /></button>
@@ -144,77 +145,67 @@ export default function DailyUpdate() {
       </Card>
 
       <div className="grid gap-6 xl:grid-cols-2">
-        <Card>
-          <H2 right={saved.sodAt ? <Chip tone="mint"><Lock size={11} /> Locked · set {new Date(saved.sodAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</Chip> : <Chip tone="butter">Not set yet</Chip>}>
-            <Sunrise size={18} className="mr-1.5 inline text-butter-ink" /> Start of day
-          </H2>
-          {sodLocked ? (
-            <div className="space-y-3">
-              <p className="rounded-xl bg-surface-2 p-3 text-sm">{saved.sodNote || <span className="text-muted">No note.</span>}</p>
-              <p className="text-sm font-semibold">Today's targets</p>
-              <NumbersView numbers={saved.sodTargets} empty="No number targets set." />
-              <CustomRowsView rows={saved.sodCustom} />
-              <CustomBlocksView plan={saved.plan} />
-              <Btn tone="ghost" className="border border-line" onClick={() => setEditSod(true)}><Pencil size={13} /> Edit targets</Btn>
-            </div>
-          ) : (
-            <>
-              <label className="text-sm font-semibold">What will you get done today?
-                <textarea rows={2} className={cx(input, 'mt-1')} value={sodNote} onChange={(e) => setSodNote(e.target.value)} placeholder="e.g. Finish the QBR deck, then 30 personalised L1s" />
-              </label>
-              <p className="mb-2 mt-4 text-sm font-semibold">Today's targets</p>
-              <NumbersGrid value={sodTargets} onChange={setSodTargets} />
-              <CustomRows rows={sodCustom} onChange={setSodCustom} hint="Anything else you're aiming for today" />
-              <div className="mt-4 flex gap-2">
-                <Btn onClick={() => safe(() => { saveDaily(me, date, { sodNote, sodTargets, sodCustom: sodCustom.filter((r) => r.label.trim()), sodAt: new Date().toISOString() }); setEditSod(false); toast({ title: "Today's targets locked 🎯", tone: 'success' }); })}><Lock size={13} /> {saved.sodAt ? 'Save & lock' : "Set & lock today's targets"}</Btn>
-                {saved.sodAt && <Btn tone="ghost" className="border border-line" onClick={() => { setSodNote(saved.sodNote); setSodTargets(saved.sodTargets); setEditSod(false); }}>Cancel</Btn>}
-              </div>
-            </>
-          )}
-        </Card>
+        <UpdateSection icon={SodIcon} tone="bg-butter/50" title="Today's targets" subtitle="Filled from the tasks your project managers gave you"
+          lockedAt={saved.sodAt} editing={editSod} onEdit={() => setEditSod(true)}
+          view={<>
+            <TaskSummary tasks={dayTasks} mode="assigned" />
+            <AutoTasks tasks={dayTasks} mode="assigned" empty="No tasks assigned for this day yet." />
+            {saved.sodNote && <p className="rounded-xl bg-surface-2 p-3 text-sm">“{saved.sodNote}”</p>}
+            <NumbersView numbers={saved.sodTargets} empty="" />
+            <CustomRowsView rows={saved.sodCustom} />
+            <CustomBlocksView plan={saved.plan} />
+          </>}>
+          <TaskSummary tasks={dayTasks} mode="assigned" />
+          <AutoTasks tasks={dayTasks} mode="assigned" empty="No tasks assigned for this day yet." />
+          <label className="block text-sm font-semibold">Anything to add?
+            <textarea rows={2} className={cx(input, 'mt-1')} value={sodNote} onChange={(e) => setSodNote(e.target.value)} placeholder="e.g. QBR deck first, then personalised L1s" />
+          </label>
+          <CustomRows rows={sodCustom} onChange={setSodCustom} hint="anything else you're aiming for today" />
+          <details className="rounded-xl border border-line p-3">
+            <summary className="cursor-pointer text-sm font-semibold">Project numbers to hit (optional)</summary>
+            <div className="mt-3"><NumbersGrid value={sodTargets} onChange={setSodTargets} /></div>
+          </details>
+          <Btn onClick={() => safe(() => { saveDaily(me, date, { sodNote, sodTargets, sodCustom: sodCustom.filter((r) => r.label.trim()), sodAt: new Date().toISOString() }); setEditSod(false); toast({ title: "Today's targets locked 🎯", tone: 'success' }); })}><Lock size={13} /> Save & lock</Btn>
+        </UpdateSection>
 
-        <Card>
-          <H2 right={saved.eodAt ? <Chip tone="mint"><Lock size={11} /> Locked · sent {new Date(saved.eodAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</Chip> : <Chip tone="butter">Not sent yet</Chip>}>
-            <Moon size={18} className="mr-1.5 inline text-accent-ink" /> End of day
-          </H2>
-          {eodLocked ? (
-            <div className="space-y-3">
-              <p className="rounded-xl bg-surface-2 p-3 text-sm">{saved.eodNote || <span className="text-muted">No note.</span>}</p>
-              <p className="text-sm font-semibold">Achieved vs this morning's targets</p>
-              <NumbersView numbers={saved.eodActuals} targets={saved.sodTargets} empty="No numbers reported." />
-              <CustomRowsView rows={saved.eodCustom} targets={saved.sodCustom} />
-              <CustomBlocksView plan={saved.plan} />
-              <Btn tone="ghost" className="border border-line" onClick={() => setEditEod(true)}><Pencil size={13} /> Edit update</Btn>
-            </div>
-          ) : (
-            <>
-              <label className="text-sm font-semibold">How did today go?
-                <textarea rows={2} className={cx(input, 'mt-1')} value={eodNote} onChange={(e) => setEodNote(e.target.value)} placeholder="Wins, blockers, what carries over to tomorrow" />
-              </label>
-              <p className="mb-1 mt-4 text-sm font-semibold">What you achieved</p>
-              <p className="mb-2 text-xs text-muted">Messages and decks are counted automatically from your submitted tasks. These numbers add to your projects straight away.</p>
-              {plan.some((b) => b.custom) && (
-                <div className="mb-3 space-y-2">
-                  {plan.filter((b) => b.custom).map((b) => (
-                    <div key={b.id} className="flex flex-wrap items-center gap-2 rounded-xl border border-line p-3 text-sm" style={{ borderLeft: `5px solid ${b.custom!.priority ? '#DC2626' : '#64748B'}` }}>
-                      <span className="min-w-0 flex-1"><b>{b.custom!.priority && '★ '}{b.custom!.title || 'Custom block'}</b><span className="block text-xs text-muted">{b.start}–{b.end} · target {b.custom!.targetQty || 0} {b.custom!.unit}</span></span>
-                      <label className="flex items-center gap-1 text-xs text-muted">Achieved
-                        <input type="number" min={0} className={cx(field, 'w-20 text-right')} value={b.custom!.achieved ?? ''} placeholder="0" onChange={(e) => updC(b.id, { achieved: Math.max(0, +e.target.value || 0) })} />
-                      </label>
-                    </div>
-                  ))}
+        <UpdateSection icon={EodIcon} tone="bg-lavender/50" title="End of day update" subtitle="Filled from the tasks you submitted today"
+          lockedAt={saved.eodAt} editing={editEod} onEdit={() => setEditEod(true)}
+          view={<>
+            <TaskSummary tasks={doneToday} mode="submitted" />
+            <AutoTasks tasks={doneToday} mode="submitted" empty="No tasks submitted on this day." />
+            {saved.eodNote && <p className="rounded-xl bg-surface-2 p-3 text-sm">“{saved.eodNote}”</p>}
+            <NumbersView numbers={saved.eodActuals} targets={saved.sodTargets} empty="" />
+            <CustomRowsView rows={saved.eodCustom} targets={saved.sodCustom} />
+            <CustomBlocksView plan={saved.plan.filter((b) => b.custom?.achieved != null)} />
+          </>}>
+          <TaskSummary tasks={doneToday} mode="submitted" />
+          <AutoTasks tasks={doneToday} mode="submitted" empty="Nothing submitted yet — submitted tasks appear here automatically." />
+          {plan.some((b) => b.custom) && (
+            <div className="space-y-2">
+              {plan.filter((b) => b.custom).map((b) => (
+                <div key={b.id} className="flex flex-wrap items-center gap-2 rounded-xl border border-line p-2.5 text-sm" style={{ borderLeft: `5px solid ${b.custom!.priority ? '#DC2626' : '#64748B'}` }}>
+                  <span className="min-w-0 flex-1"><b>{b.custom!.priority && '★ '}{b.custom!.title || 'Custom block'}</b><span className="block text-xs text-muted">{b.start}–{b.end} · target {b.custom!.targetQty || 0} {b.custom!.unit}</span></span>
+                  <label className="flex items-center gap-1 text-xs text-muted">Achieved
+                    <input type="number" min={0} className={cx(field, 'w-20 text-right')} value={b.custom!.achieved ?? ''} placeholder="0" onChange={(e) => updC(b.id, { achieved: Math.max(0, +e.target.value || 0) })} />
+                  </label>
                 </div>
-              )}
-              <NumbersGrid value={eodActuals} onChange={setEodActuals} skipAuto />
-              <CustomRows rows={eodCustom} onChange={setEodCustom} hint="Anything else you did that isn't listed above" suggest={sodCustom} />
-              <div className="mt-4 flex gap-2">
-                <Btn onClick={() => safe(() => { saveDaily(me, date, { plan, eodNote, eodActuals, eodCustom: eodCustom.filter((r) => r.label.trim()), eodAt: new Date().toISOString() }); setEditEod(false); toast({ title: `End of day sent & locked — nice work, ${first(me)} 🌙`, tone: 'success' }); })}><Lock size={13} /> {saved.eodAt ? 'Save & lock' : 'Send & lock end of day'}</Btn>
-                {saved.eodAt && <Btn tone="ghost" className="border border-line" onClick={() => { setEodNote(saved.eodNote); setEodActuals(saved.eodActuals); setEditEod(false); }}>Cancel</Btn>}
-              </div>
-            </>
+              ))}
+            </div>
           )}
-        </Card>
+          <label className="block text-sm font-semibold">How did today go?
+            <textarea rows={2} className={cx(input, 'mt-1')} value={eodNote} onChange={(e) => setEodNote(e.target.value)} placeholder="Wins, blockers, what carries over to tomorrow" />
+          </label>
+          <CustomRows rows={eodCustom} onChange={setEodCustom} hint="anything extra you worked on today" suggest={sodCustom} />
+          <details className="rounded-xl border border-line p-3">
+            <summary className="cursor-pointer text-sm font-semibold">Project numbers (responses, calls, meetings…)</summary>
+            <p className="mt-2 text-xs text-muted">Messages and decks are counted from your submitted tasks automatically.</p>
+            <div className="mt-3"><NumbersGrid value={eodActuals} onChange={setEodActuals} skipAuto /></div>
+          </details>
+          <Btn onClick={() => safe(() => { saveDaily(me, date, { plan, eodNote, eodActuals, eodCustom: eodCustom.filter((r) => r.label.trim()), eodAt: new Date().toISOString() }); setEditEod(false); toast({ title: `End of day sent — nice work, ${first(me)} 🌙`, tone: 'success' }); })}><Lock size={13} /> Send & lock</Btn>
+        </UpdateSection>
       </div>
+
+      <WeeklySections personId={me} date={date} />
     </div>
   );
 }

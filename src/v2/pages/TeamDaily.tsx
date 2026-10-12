@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import { CalendarDays, ChevronLeft, ChevronRight, Moon, Sunrise } from 'lucide-react';
 import { day, isLeadRole, PEOPLE } from '../data';
-import { emptyDaily, nameOf, useStore } from '../store';
+import { emptyDaily, emptyWeekly, nameOf, useStore } from '../store';
+import { SUBMITTED, TaskSummary, weekOf } from './TaskUpdateSections';
 import { Avatar, Card, Chip, cx } from '../ui';
 import { CustomBlocksView, CustomRowsView, NumbersView } from './DailyViews';
 import { colorOf } from './Widgets';
@@ -18,8 +19,10 @@ type Filter = 'all' | 'noTargets' | 'noEod';
 
 /** Managers & founders: everyone's morning targets and evening report for a day, side by side. */
 export default function TeamDaily() {
-  const { daily, projects } = useStore();
+  const { daily, projects, tasks, weekly } = useStore();
   const [date, setDate] = useState(day(0));
+  const [view, setView] = useState<'daily' | 'weekly'>('daily');
+  const [mon, fri] = weekOf(date);
   const [filter, setFilter] = useState<Filter>('all');
   const team = PEOPLE.filter((p) => !isLeadRole(p.role)).sort((a, b) => nameOf(a.id).localeCompare(nameOf(b.id)));
   const rows = team.map((p) => ({ p, d: daily[`${p.id}|${date}`] ?? emptyDaily() }));
@@ -33,8 +36,8 @@ export default function TeamDaily() {
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-bold">Team daily updates</h1>
-          <p className="text-sm text-muted">What everyone planned this morning and what they got done by evening.</p>
+          <h1 className="text-2xl font-bold">Team tasks update</h1>
+          <p className="text-sm text-muted">{view === 'daily' ? 'Today’s targets and end-of-day updates from everyone.' : `Weekly targets and end-of-week updates · ${mon} → ${fri}`}</p>
         </div>
         <div className="flex items-center gap-1 rounded-xl border border-line bg-surface p-1">
           <button aria-label="Previous day" className="focus-ring rounded-lg p-1.5 hover:bg-surface-2" onClick={() => setDate(shift(date, -1))}><ChevronLeft size={16} /></button>
@@ -43,6 +46,47 @@ export default function TeamDaily() {
         </div>
       </div>
 
+      <div className="flex w-fit rounded-full bg-surface-2 p-1" role="tablist">
+        {(['daily', 'weekly'] as const).map((v) => (
+          <button key={v} role="tab" aria-selected={view === v} onClick={() => setView(v)} className={cx('focus-ring rounded-full px-5 py-1.5 text-sm font-semibold', view === v ? 'bg-accent text-accent-on shadow-soft' : 'text-muted')}>{v === 'daily' ? '☀️ Daily' : '📅 Weekly'}</button>
+        ))}
+      </div>
+
+      {view === 'weekly' ? (
+        <div className="grid gap-5 lg:grid-cols-2">
+          {team.map((p) => {
+            const w = weekly[`${p.id}|${mon}`] ?? emptyWeekly();
+            const wk = tasks.filter((t) => t.assigneeId === p.id && t.date >= mon && t.date <= fri);
+            const sub = wk.filter(SUBMITTED);
+            return (
+              <Card key={p.id} className="p-0">
+                <div className="flex items-center gap-3 border-b border-line px-5 py-3">
+                  <Avatar id={p.id} />
+                  <div className="min-w-0 flex-1"><p className="font-bold">{nameOf(p.id)}</p><p className="text-xs text-muted">{p.title}</p></div>
+                  <Chip tone={w.targetsAt ? 'mint' : 'grey'}>📅 {w.targetsAt ? 'Targets set' : 'Pending'}</Chip>
+                  <Chip tone={w.eowAt ? 'mint' : 'grey'}>🏁 {w.eowAt ? 'Week sent' : 'Pending'}</Chip>
+                </div>
+                <div className="grid gap-4 p-5 sm:grid-cols-2">
+                  <div className="space-y-2">
+                    <p className="text-xs font-bold uppercase text-sky-ink">Weekly targets</p>
+                    <TaskSummary tasks={wk} mode="assigned" />
+                    {w.targetsNote && <p className="text-sm">“{w.targetsNote}”</p>}
+                    <CustomRowsView rows={w.targetsCustom} />
+                    {!w.targetsAt && !wk.length && <p className="text-sm text-muted">Nothing yet.</p>}
+                  </div>
+                  <div className="space-y-2 sm:border-l sm:border-line sm:pl-4">
+                    <p className="text-xs font-bold uppercase text-mint-ink">End of week</p>
+                    <TaskSummary tasks={sub} mode="submitted" />
+                    {w.eowNote && <p className="text-sm">“{w.eowNote}”</p>}
+                    <CustomRowsView rows={w.eowCustom} targets={w.targetsCustom} />
+                    {!w.eowAt && <p className="text-sm text-muted">Not sent yet.</p>}
+                  </div>
+                </div>
+              </Card>
+            );
+          })}
+        </div>
+      ) : (<>
       <div className="grid gap-3 sm:grid-cols-3">
         {[
           { key: 'noTargets' as const, icon: '🌅', label: 'Set morning targets', value: `${setCount} / ${team.length}`, bg: 'from-amber-400 to-orange-500' },
@@ -79,7 +123,8 @@ export default function TeamDaily() {
             )}
             <div className="grid gap-4 p-5 sm:grid-cols-2">
               <div>
-                <p className="mb-2 flex items-center gap-1.5 text-xs font-bold uppercase text-butter-ink"><Sunrise size={14} /> Morning targets</p>
+                <p className="mb-2 flex items-center gap-1.5 text-xs font-bold uppercase text-butter-ink"><Sunrise size={14} /> Today's targets</p>
+                <div className="mb-2"><TaskSummary tasks={tasks.filter((t) => t.assigneeId === p.id && t.date === date)} mode="assigned" /></div>
                 {d.sodAt ? (
                   <div className="space-y-2">
                     {d.sodNote && <p className="text-sm">“{d.sodNote}”</p>}
@@ -91,6 +136,7 @@ export default function TeamDaily() {
               </div>
               <div className="sm:border-l sm:border-line sm:pl-4">
                 <p className="mb-2 flex items-center gap-1.5 text-xs font-bold uppercase text-accent-ink"><Moon size={14} /> End of day</p>
+                <div className="mb-2"><TaskSummary tasks={tasks.filter((t) => t.assigneeId === p.id && t.date === date && SUBMITTED(t))} mode="submitted" /></div>
                 {d.eodAt ? (
                   <div className="space-y-2">
                     {d.eodNote && <p className="text-sm">“{d.eodNote}”</p>}
@@ -104,6 +150,7 @@ export default function TeamDaily() {
           </Card>
         ))}
       </div>
+      </>)}
     </div>
   );
 }

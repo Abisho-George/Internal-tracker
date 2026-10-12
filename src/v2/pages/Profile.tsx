@@ -112,13 +112,13 @@ export default function Profile() {
           <H2>Theme</H2>
           <p className="mb-1.5 text-xs font-bold uppercase text-muted">Mode</p>
           <div className="flex gap-2">
-            <Btn tone={!prof.dark ? 'primary' : 'ghost'} className="border border-line" onClick={() => setProfile(me, { dark: false })}><Sun size={14} /> Light</Btn>
-            <Btn tone={prof.dark ? 'primary' : 'ghost'} className="border border-line" onClick={() => setProfile(me, { dark: true })}><Moon size={14} /> Dark</Btn>
+            <Btn tone={!prof.dark ? 'primary' : 'ghost'} className="border border-line" onClick={() => setProfile(me, { dark: false, theme: 'pro' })}><Sun size={14} /> Light</Btn>
+            <Btn tone={prof.dark ? 'primary' : 'ghost'} className="border border-line" onClick={() => setProfile(me, { dark: true, theme: 'dark' })}><Moon size={14} /> Dark</Btn>
           </div>
           <p className="mb-1.5 mt-5 text-xs font-bold uppercase text-muted">Accent colour</p>
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
             {ACCENTS.map((a) => (
-              <button key={a.id} onClick={() => setProfile(me, { accent: a.id })} className={cx('focus-ring flex items-center gap-2 rounded-xl border p-2 text-sm', (prof.accent ?? 'brand') === a.id ? 'border-accent bg-accent-soft font-semibold' : 'border-line')}>
+              <button key={a.id} onClick={() => setProfile(me, { accent: a.id, theme: prof.dark ? 'dark' : 'pro' })} className={cx('focus-ring flex items-center gap-2 rounded-xl border p-2 text-sm', (prof.accent ?? 'brand') === a.id ? 'border-accent bg-accent-soft font-semibold' : 'border-line')}>
                 <span className="h-5 w-5 rounded-full" style={{ background: a.swatch }} /> {a.label}
               </button>
             ))}

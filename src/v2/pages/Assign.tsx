@@ -72,7 +72,7 @@ export default function Assign() {
   const [cart, setCart] = useState<CartItem[]>([]);
   const type = TASK_TYPES.find((t) => t.id === typeId);
   const assignee = people.some((p) => p.id === assigneeId) ? assigneeId : people[0]?.id;
-  const auto = type ? targetFor(typeId, qty, type.variants ? variant : undefined) : target;
+  const auto = type ? targetFor(typeId, qty, type.variants ? variant : undefined, project?.standards) : target;
   useEffect(() => { if (!targetEdited && type) setTarget(auto); }, [auto, targetEdited, type]);
   const assigned = tasks.filter((t) => t.assignedById === me);
   const openAssigned = assigned.filter((t) => t.status !== 'done' && t.status !== 'in_review');
@@ -176,7 +176,7 @@ export default function Assign() {
                         <div className="mt-2 flex gap-2">
                           <label className="flex items-center gap-1 text-xs text-muted">Qty<input type="number" min={1} className={cx(input, 'w-20 py-1')} value={i.qty} onChange={(e) => {
                             const q = +e.target.value;
-                            update(i.key, { qty: q, ...(TASK_TYPES.some((t) => t.id === i.typeId) ? { targetMinutes: targetFor(i.typeId, q, i.variant) } : {}) });
+                            update(i.key, { qty: q, ...(TASK_TYPES.some((t) => t.id === i.typeId) ? { targetMinutes: targetFor(i.typeId, q, i.variant, projects.find((x) => x.id === i.projectId)?.standards) } : {}) });
                           }} /></label>
                           <label className="flex items-center gap-1 text-xs text-muted">Min<input type="number" min={1} className={cx(input, 'w-20 py-1')} value={i.targetMinutes} onChange={(e) => update(i.key, { targetMinutes: +e.target.value })} /></label>
                         </div>

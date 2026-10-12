@@ -131,6 +131,8 @@ export interface Project {
   pastWeeks: { start: string; counts: Counts }[];
   pastMonths: { month: string; counts: Counts }[];
   updates: { id: string; text: string; at: string; by: string }[];
+  /** Project-specific standard minutes per unit (used for target times and on-time %). */
+  standards?: Standards;
 }
 
 const ALL = METRICS;
@@ -171,7 +173,7 @@ export function seedProjects(): Project[] {
         { id: 'mt1', company: 'Acme Cloud', contact: 'J. Ortiz, VP Sales', date: day(1), time: '10:30' },
         { id: 'mt2', company: 'Brightlane', contact: 'S. Patel, RevOps', date: day(3), time: '15:00' },
       ],
-      updates: [{ id: 'u1', text: 'New ICP list approved by client — starting VP Sales sequence.', at: new Date().toISOString(), by: 'bheeshma' }],
+      updates: [], standards: { prospect: 2, l1: 2, l2: 1.5 },
     },
     {
       id: 'helios', name: 'Helios Fintech – UK', client: 'Helios', pmId: 'alok', status: 'active',
@@ -180,7 +182,7 @@ export function seedProjects(): Project[] {
       metrics: pick('messages', 'responses', 'l2', 'interest', 'meetings', 'decks'),
       weekTarget: c(250, 25, 120, 50, 8, 3, 1), monthTarget: c(1000, 100, 480, 200, 30, 12, 4), weekLocked: true, monthLocked: true,
       week: c(160, 14, 70, 22, 4, 1, 1), month: c(690, 66, 350, 150, 22, 8, 3),
-      meetings: [], updates: [],
+      meetings: [], updates: [], standards: { prospect: 2.5, l1: 2.5, l2: 2 },
     },
     {
       id: 'bd', name: 'Lead Strategus – Internal BD', client: 'Lead Strategus', pmId: 'abisho', status: 'active',
@@ -190,7 +192,7 @@ export function seedProjects(): Project[] {
       weekTarget: c(150, 15, 60, 30, 5, 2, 1), monthTarget: c(600, 60, 240, 120, 20, 8, 3), weekLocked: false, monthLocked: true,
       week: c(96, 9, 31, 18, 3, 1, 0), month: c(410, 41, 150, 77, 12, 5, 2),
       meetings: [{ id: 'mt3', company: 'Northstar Agency', contact: 'R. Kapoor, Founder', date: day(2), time: '12:00' }],
-      updates: [],
+      updates: [], standards: { prospect: 1.5, l1: 1.5, l2: 1.2 },
     },
   ] as Omit<Project, 'pastWeeks' | 'pastMonths'>[]).map((p, i) => withHistory(p, 101 + i * 37));
 }
@@ -225,10 +227,20 @@ export interface Task {
   historic?: boolean;
 }
 
-export function targetFor(typeId: string, qty: number, variant?: string): number {
+export interface Standards { prospect: number; l1: number; l2: number }
+export const DEFAULT_STANDARDS: Standards = { prospect: 2, l1: 2, l2: 1.5 };
+/** Semi-personalised and templated L1 messages take this share of a personalised one. */
+const L1_SHARE: Record<string, number> = { Personalised: 1, 'Semi-personalised': 2 / 3, Templated: 0.5 };
+
+export function targetFor(typeId: string, qty: number, variant?: string, standards?: Standards): number {
   const type = TASK_TYPES.find((x) => x.id === typeId);
   if (!type) return 60;
-  const per = variant ? L1_VARIANT_RATE[variant] ?? type.perUnit : type.perUnit;
+  let per = variant ? L1_VARIANT_RATE[variant] ?? type.perUnit : type.perUnit;
+  if (standards) {
+    if (typeId === 'prospect') per = standards.prospect;
+    if (typeId === 'l2') per = standards.l2;
+    if (typeId === 'l1') per = standards.l1 * (L1_SHARE[variant ?? 'Personalised'] ?? 1);
+  }
   return Math.max(1, Math.round(per * qty));
 }
 
