@@ -27,7 +27,10 @@ export interface Profile {
   name?: string; emoji?: string; photo?: string; accent?: string; dark?: boolean;
   /** mascot: undefined means ON (the mascot is shown by default). */
   theme?: ThemeId; custom?: CustomTheme; mascot?: boolean; fun?: boolean;
+  /** Their lunch break (defaults to 1pm to 2pm); locked stops it being changed by accident. */
+  lunch?: Lunch;
 }
+export interface Lunch { start: string; end: string; locked?: boolean }
 
 /** Frozen target vs actual numbers, keyed by row key (task type, L1 variant, custom task, or `row:<label>` free-form rows). */
 export interface SnapshotRow { label: string; unit: string; target: number; actual: number }
@@ -131,6 +134,9 @@ export const emptyDaily = (): DailyUpdate => ({ plan: [], sodNote: '', sodTarget
 
 /** Lunch is fixed for everyone, every day. */
 export const LUNCH = { start: '13:00', end: '14:00' };
+/** Someone's lunch break: their own setting, or the default 1pm to 2pm. */
+export const lunchOf = (profiles: Record<string, Profile>, personId: string): Lunch => profiles[personId]?.lunch ?? LUNCH;
+const hm12 = (t: string) => { const [h, m] = t.split(':').map(Number); return `${h % 12 || 12}${m ? `:${String(m).padStart(2, '0')}` : ''}${h < 12 ? 'am' : 'pm'}`; };
 
 /** Handover options: what happens to the previous owner. */
 export type TransferMode = 'remove-me' | 'stay-admin' | 'stay-member';
@@ -862,7 +868,8 @@ export const useStore = create<Data & Actions>()(
               if (b.end <= b.start) throw new Error('A time block must end after it starts.');
               if (b.actualMinutes != null && (!Number.isFinite(b.actualMinutes) || b.actualMinutes < 0 || b.actualMinutes > 720)) throw new Error('Actual time must be between 0 and 12 hours.');
             }
-            for (const b of patchD.plan) if (b.start < LUNCH.end && b.end > LUNCH.start) throw new Error('1pm to 2pm is lunch 🍽, move that block around it.');
+            const L = lunchOf(get().profiles, personId);
+            for (const b of patchD.plan) if (b.start < L.end && b.end > L.start) throw new Error(`${hm12(L.start)} to ${hm12(L.end)} is lunch 🍽, move that block around it.`);
             const sorted = [...patchD.plan].sort((a, b) => a.start.localeCompare(b.start));
             for (let i = 1; i < sorted.length; i++) if (sorted[i].start < sorted[i - 1].end) throw new Error('Two time blocks overlap, adjust the times.');
             patchD = { ...patchD, plan: patchD.plan.map((b) => (b.actualMinutes != null ? { ...b, actualMinutes: Math.round(b.actualMinutes) } : b)) };

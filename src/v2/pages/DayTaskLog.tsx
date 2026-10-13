@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { CalendarRange, ClipboardList, Copy, Lock, Pencil, Plus, Save, Trash2 } from 'lucide-react';
+import { CalendarRange, Check, ClipboardList, Copy, Lock, Pencil, Plus, Save, Trash2, X } from 'lucide-react';
 import { toast } from '@/components';
 import { addDays, canManage, previousWorkingDay, TASK_TYPES, toMinutes, weekStartOf, type Project } from '../data';
 import { emptyDaily, emptyWeekly, useStore, type DayBlock, type ExtraHours, type TaskEntry } from '../store';
@@ -90,10 +90,33 @@ export default function DayTaskLog({ personId, date, plan, extra, readOnly, kind
       projects.filter((p) => p.status === 'active' && (p.pmId === personId || p.teamIds.includes(personId) || p.admins?.includes(personId)))
         .forEach((p) => planned.set(p.id, Math.round((p.hours[personId] ?? 0) * 60 * 5)));
     }
+    const base = new Set(planned.keys());
     list.forEach((e) => { if (!planned.has(e.projectId)) planned.set(e.projectId, 0); });
     added.forEach((pid) => { if (!planned.has(pid)) planned.set(pid, 0); });
-    return [...planned].map(([pid, min]) => ({ project: projects.find((p) => p.id === pid), pid, planned: min, name: groupName(pid, projects) })).filter((g) => g.project || g.pid.startsWith(OTHER));
+    return [...planned].map(([pid, min]) => ({ project: projects.find((p) => p.id === pid), pid, planned: min, name: groupName(pid, projects), extra: !base.has(pid) })).filter((g) => g.project || g.pid.startsWith(OTHER));
   }, [kind, blocks, extras, list, projects, personId, added]);
+  // Projects or other work added by hand (not from the plan or your projects) can be renamed or removed.
+  const [renaming, setRenaming] = useState<{ pid: string; name: string } | null>(null);
+  const removeGroup = (pid: string, name: string) => {
+    const has = list.some((e) => e.projectId === pid && (e.task || e.desc));
+    if (has && !window.confirm(`Remove ${name} and its tasks from this ${what}?`)) return;
+    setRows((r) => r.filter((e) => e.projectId !== pid));
+    setAdded((a) => a.filter((x) => x !== pid));
+    if (saved.some((e) => e.projectId === pid)) persist({ entries: saved.filter((e) => e.projectId !== pid) });
+    toast({ title: `${name} removed`, tone: 'info' });
+  };
+  const renameGroup = () => {
+    if (!renaming) return;
+    const nm = renaming.name.trim();
+    if (!nm) { toast({ title: 'Type a name', tone: 'error' }); return; }
+    const to = `${OTHER}${nm}`;
+    if (to !== renaming.pid && groups.some((g) => g.pid === to)) { toast({ title: `${nm} is already in the list`, tone: 'error' }); return; }
+    const move = (xs: TaskEntry[]) => xs.map((e) => (e.projectId === renaming.pid ? { ...e, projectId: to } : e));
+    setRows(move);
+    setAdded((a) => [...a.filter((x) => x !== renaming.pid), to]);
+    if (saved.some((e) => e.projectId === renaming.pid)) persist({ entries: move(saved) });
+    setRenaming(null);
+  };
   const addable = projects.filter((p) => p.status === 'active' && !groups.some((g) => g.pid === p.id));
   const addGroup = (v: string) => {
     if (!v) return;
@@ -147,7 +170,7 @@ export default function DayTaskLog({ personId, date, plan, extra, readOnly, kind
       {groups.length === 0 && <p className="px-4 py-6 text-center text-sm text-muted">{readOnly ? `Nothing for this ${what}.` : kind === 'day' ? 'Add time blocks to your plan above and a table opens here for each project.' : 'You are not on any project yet.'}</p>}
 
       <div className="space-y-4 p-4">
-        {groups.map(({ project, pid, planned, name }) => {
+        {groups.map(({ project, pid, planned, name, extra }) => {
           const opts = optionsFor(project);
           const mine = list.filter((e) => e.projectId === pid);
           const est = mine.reduce((a, e) => a + e.estMin, 0);
@@ -156,7 +179,19 @@ export default function DayTaskLog({ personId, date, plan, extra, readOnly, kind
           return (
             <section key={pid} data-project-log={pid} data-kind={kind} className="overflow-hidden rounded-xl border border-line" style={{ borderLeft: `5px solid ${project ? colorOf(projects, pid) : '#64748B'}` }}>
               <div className="flex flex-wrap items-center justify-between gap-2 bg-surface-2/60 px-3 py-2">
-                <p className="font-semibold">{name}{!project && <span className="ml-2 rounded bg-surface px-1.5 py-0.5 text-[10px] font-bold text-muted">OTHER WORK</span>}</p>
+                {renaming?.pid === pid ? (
+                  <span className="flex items-center gap-1.5">
+                    <input aria-label="New name" autoFocus className="focus-ring w-52 rounded-lg border border-line bg-surface px-2 py-1 text-sm" value={renaming.name}
+                      onChange={(e) => setRenaming({ pid, name: e.target.value })} onKeyDown={(e) => { if (e.key === 'Enter') renameGroup(); if (e.key === 'Escape') setRenaming(null); }} />
+                    <Btn tone="soft" onClick={renameGroup}><Check size={13} /> Save</Btn>
+                    <button aria-label="Cancel rename" className="focus-ring rounded-lg p-1 text-muted hover:text-ink" onClick={() => setRenaming(null)}><X size={14} /></button>
+                  </span>
+                ) : (
+                  <p className="flex items-center gap-1.5 font-semibold">{name}{!project && <span className="rounded bg-surface px-1.5 py-0.5 text-[10px] font-bold text-muted">OTHER WORK</span>}
+                    {!readOnly && extra && !project && <button aria-label={`Rename ${name}`} title="Rename" className="focus-ring rounded-lg p-1 text-muted hover:bg-surface hover:text-accent-ink" onClick={() => setRenaming({ pid, name })}><Pencil size={12} /></button>}
+                    {!readOnly && extra && <button aria-label={`Remove ${name}`} title="Remove" className="focus-ring rounded-lg p-1 text-muted hover:bg-surface hover:text-coral-ink" onClick={() => removeGroup(pid, name)}><Trash2 size={12} /></button>}
+                  </p>
+                )}
                 <span className="flex flex-wrap items-center gap-2">
                   {planned > 0 && <span className="text-xs text-muted">Planned <b className="text-ink">{fmtMin(planned)}</b></span>}
                   {edit && <button className="focus-ring flex items-center gap-1 rounded-full border border-line bg-surface px-2.5 py-0.5 text-xs font-semibold text-accent-ink hover:bg-surface-2" onClick={() => fillFromPrev(pid)}>

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { ChevronLeft, ChevronRight, Crown, Sparkles, Trophy } from 'lucide-react';
 import { Modal } from '@/components';
 import { day, inPeriod, PEOPLE, weekStart, type Project, type Task } from '../data';
-import { first, nameOf, onTimeRate, projectCounts, useStore, type DayBlock, type ExtraHours } from '../store';
+import { first, lunchOf, nameOf, onTimeRate, projectCounts, useStore, type DayBlock, type ExtraHours } from '../store';
 import { personSeries, teamTable } from '../analytics';
 import { Avatar, Bar, Chip, PROJECT_COLORS, STATUS, cx, fmtMin } from '../ui';
 import { useLook } from '../theme';
@@ -20,6 +20,7 @@ export const colorOf = (projects: Project[], id: string) => PROJECT_COLORS[Math.
 /** Working day 10am → 7pm: the planned blocks, a live "now" marker and time logged. */
 export function DayTracker({ blocks, loggedMinutes, extra = [] }: { blocks: DayBlock[]; loggedMinutes: number; extra?: ExtraHours[] }) {
   const projects = useStore((s) => s.projects);
+  const lunch = useStore((s) => lunchOf(s.profiles, s.me));
   const look = useLook();
   const deco = (color: string) => look.blocks === 'striped' ? { backgroundImage: 'repeating-linear-gradient(45deg, rgb(255 255 255 / 0.18) 0 7px, transparent 7px 14px)' } : look.blocks === 'candy' ? { backgroundImage: `linear-gradient(180deg, rgb(255 255 255 / 0.35), transparent 60%)`, boxShadow: `inset 0 -3px 0 ${color}` } : {};
   const [now, setNow] = useState(() => new Date());
@@ -34,7 +35,7 @@ export function DayTracker({ blocks, loggedMinutes, extra = [] }: { blocks: DayB
   return (
     <div className="pt-6">
       <div className="relative h-10 overflow-hidden rounded-xl bg-surface-2">
-        <div className="absolute inset-y-0 flex items-center justify-center border-x-2 border-surface bg-grey text-[11px] font-semibold text-grey-ink" style={{ left: `${((13 * 60 - DAY_START) / span) * 100}%`, width: `${(60 / span) * 100}%`, backgroundImage: 'repeating-linear-gradient(135deg, rgb(0 0 0 / 0.04) 0 6px, transparent 6px 12px)' }} title="Lunch 1pm to 2pm">
+        <div className="absolute inset-y-0 flex items-center justify-center border-x-2 border-surface bg-grey text-[11px] font-semibold text-grey-ink" style={{ left: `${((toMin(lunch.start) - DAY_START) / span) * 100}%`, width: `${((toMin(lunch.end) - toMin(lunch.start)) / span) * 100}%`, backgroundImage: 'repeating-linear-gradient(135deg, rgb(0 0 0 / 0.04) 0 6px, transparent 6px 12px)' }} title={`Lunch ${lunch.start} to ${lunch.end}`}>
           🍽 Lunch
         </div>
         {blocks.map((b) => {
