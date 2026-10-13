@@ -1,3 +1,4 @@
+import { TargetsProgress } from './DayTaskLog';
 import { useEffect, useState, type ReactNode } from 'react';
 import { CalendarCheck2, CalendarRange, Check, Lock, Moon, Pencil, Sunrise } from 'lucide-react';
 import { toast } from '@/components';
@@ -143,11 +144,13 @@ export function WeeklySections({ personId, date }: { personId: string; date: str
       <UpdateSection id="weekly-targets" icon={<CalendarRange size={18} className="text-sky-ink" />} tone="bg-sky/40" title="Weekly targets" subtitle={`Week of ${label} · from tasks assigned this week`}
         lockedAt={saved.targetsAt} editing={editT} onEdit={() => setEditT(true)}
         view={<>
+          <TargetsProgress personId={personId} date={date} kind="week" />
           <TaskLine tasks={week} mode="assigned" />
           <BarList rows={all.rows} sent={all.sent} />
           {!all.sent && all.rows.length > 0 && (all.soFar ? <PendingHint>So far, from sent end-of-day updates. Final numbers freeze when you send your end of week</PendingHint> : hint)}
           <NoteView label="Focus" text={saved.targetsNote} />
         </>}>
+        <TargetsProgress personId={personId} date={date} kind="week" />
         <TaskLine tasks={week} mode="assigned" />
         <BarList rows={taskOnly} sent={all.sent} />
         {!all.sent && taskOnly.length > 0 && hint}
@@ -162,9 +165,11 @@ export function WeeklySections({ personId, date }: { personId: string; date: str
         lockedAt={saved.eowAt} lockedLabel="Sent" editing={editE} onEdit={() => setEditE(true)}
         view={<>
           {met.total > 0 && <p className="text-sm"><b>{met.met} of {met.total}</b> <span className="text-muted">weekly targets met</span></p>}
+          <TargetsProgress personId={personId} date={date} kind="week" />
           <WeekHours personId={personId} mon={mon} />
           <NoteView label="How it went" text={saved.eowNote} />
         </>}>
+        <TargetsProgress personId={personId} date={date} kind="week" />
         <WeekHours personId={personId} mon={mon} />
         <label className="block text-sm font-semibold">How did the week go?
           <textarea rows={2} className={cx(input, 'mt-1')} value={eNote} onChange={(e) => setENote(e.target.value)} placeholder="Wins, blockers, what moves to next week" />

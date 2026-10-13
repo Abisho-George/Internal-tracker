@@ -38,6 +38,9 @@ export interface WeeklyUpdate {
   targetsNote: string; targetsCustom: CustomRow[]; targetsAt?: string; eowNote: string; eowCustom: CustomRow[]; eowAt?: string;
   /** Frozen automatically when the end-of-week update is sent. */
   eowSnapshot?: Snapshot;
+  /** Weekly task rows per project, same shape as the daily update; locked when entriesAt is set. */
+  entries?: TaskEntry[];
+  entriesAt?: string;
 }
 export const emptyWeekly = (): WeeklyUpdate => ({ targetsNote: '', targetsCustom: [], eowNote: '', eowCustom: [] });
 
@@ -117,7 +120,12 @@ export interface DailyUpdate {
   entriesAt?: string;
 }
 /** One task row under a planned project: picked from the list (task type or project standard) or typed in. */
-export interface TaskEntry { id: string; projectId: string; task: string; custom?: string; desc: string; estMin: number; actualMin?: number; achieved: string; remarks: string }
+export interface TaskEntry {
+  id: string; projectId: string; task: string; custom?: string; desc: string; estMin: number; actualMin?: number;
+  /** Target quantity and how many got done (left blank on a weekly row, it adds up from that week's daily rows). */
+  qty?: number; doneQty?: number;
+  achieved: string; remarks: string;
+}
 export interface CustomRow { id: string; label: string; qty: number }
 export const emptyDaily = (): DailyUpdate => ({ plan: [], sodNote: '', sodTargets: {}, eodNote: '', eodActuals: {}, sodCustom: [], eodCustom: [], extra: [] });
 

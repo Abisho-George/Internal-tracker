@@ -7,8 +7,7 @@ import { defaultPlan, emptyDaily, first, LUNCH, useStore, type CustomRow, type D
 import { Btn, Card, cx, fmtMin, input, safe } from '../ui';
 import { colorOf, DayTracker } from './Widgets';
 import { AUTO_METRICS, CustomRows, DateNav, dayRows, DurationInput, HoursStats, lastWorkingDay, NoteView, PendingHint, ReportTable } from './DailyViews';
-import WeekByProject from './WeekByProject';
-import DayTaskLog, { EntriesSummary } from './DayTaskLog';
+import DayTaskLog, { TargetsProgress } from './DayTaskLog';
 import { EodIcon, SodIcon, SUBMITTED, TaskLine, TimeBreakdown, UpdateSection, WeeklySections } from './TaskUpdateSections';
 
 const TIMES = Array.from({ length: 19 }, (_, i) => `${String(10 + Math.floor(i / 2)).padStart(2, '0')}:${i % 2 ? '30' : '00'}`);
@@ -209,17 +208,23 @@ export default function DailyUpdate() {
       </section>
 
       <DayTaskLog personId={me} date={date} plan={plan} />
+      <DayTaskLog personId={me} date={date} kind="week" />
+
+      <div className="border-t-2 border-dashed border-line pt-5">
+        <h2 className="text-lg font-bold">Auto-filled updates</h2>
+        <p className="text-sm text-muted">Built from the daily and weekly tasks above and your assigned tasks. Targets against what got achieved, updated as you go.</p>
+      </div>
 
       <div className="grid grid-cols-1 items-start gap-6 xl:grid-cols-2">
         <UpdateSection id="todays-targets" icon={SodIcon} tone="bg-butter/50" title="Today's targets" subtitle="Built from the tasks your project managers gave you"
           lockedAt={saved.sodAt} editing={editSod} onEdit={() => setEditSod(true)}
           view={<>
-            <EntriesSummary personId={me} date={date} mode="targets" editable />
+            <TargetsProgress personId={me} date={date} kind="day" />
             <TaskLine tasks={dayTasks} mode="assigned" />
             <ReportTable rows={savedRows.rows} showTime label="Today's targets" empty="No tasks assigned for this day." />
             <NoteView label="Note" text={saved.sodNote} />
           </>}>
-          <EntriesSummary personId={me} date={date} mode="targets" editable />
+          <TargetsProgress personId={me} date={date} kind="day" />
           <TaskLine tasks={dayTasks} mode="assigned" />
           <ReportTable rows={draftRows.rows} showTime label="Today's targets" empty="No tasks assigned for this day yet." />
           <CustomRows rows={sodCustom} onChange={setSodCustom} title="Custom targets" hint="anything else you're aiming for today" />
@@ -236,13 +241,13 @@ export default function DailyUpdate() {
         <UpdateSection id="end-of-day" icon={EodIcon} tone="bg-lavender/50" title="End of day update" subtitle="Actuals fill in from the tasks you submitted"
           lockedAt={saved.eodAt} lockedLabel="Sent" editing={editEod} onEdit={() => setEditEod(true)}
           view={<>
-            <EntriesSummary personId={me} date={date} mode="eod" editable />
+            <TargetsProgress personId={me} date={date} kind="day" />
             <TaskLine tasks={doneToday} mode="submitted" />
             <ReportTable rows={savedRows.rows} showActual label="End of day" empty="No tasks or targets for this day." />
             <TimeBreakdown plan={saved.plan} extra={saved.extra ?? []} sent />
             <NoteView label="How it went" text={saved.eodNote} />
           </>}>
-          <EntriesSummary personId={me} date={date} mode="eod" editable />
+          <TargetsProgress personId={me} date={date} kind="day" />
           <TaskLine tasks={doneToday} mode="submitted" />
           <ReportTable rows={savedRows.rows} showActual label="End of day" empty="No tasks or targets for this day." />
           {!sent && savedRows.rows.length > 0 && <PendingHint>Fills in when you send your end of day</PendingHint>}
@@ -276,7 +281,6 @@ export default function DailyUpdate() {
         </UpdateSection>
       </div>
 
-      <WeekByProject personId={me} date={date} />
       <WeeklySections personId={me} date={date} />
     </div>
   );
