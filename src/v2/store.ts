@@ -41,8 +41,21 @@ export interface WeeklyUpdate {
 }
 export const emptyWeekly = (): WeeklyUpdate => ({ targetsNote: '', targetsCustom: [], eowNote: '', eowCustom: [] });
 
+/** One spreadsheet-style row of a daily or weekly update (one per project, plus custom rows).
+ * Fields left undefined show the auto-filled value; typing in a cell stores an override. */
+export interface SheetRow {
+  id: string; projectId?: string; label?: string;
+  targets?: string; achieved?: string; notAchieved?: string; completed?: boolean; estMin?: number; actualMin?: number;
+  /** Values for the sheet's custom columns. */
+  custom?: Record<string, string>;
+}
+export interface Sheet { rows: SheetRow[]; cols: string[]; at?: string }
+export const emptySheet = (): Sheet => ({ rows: [], cols: [] });
+
 interface Data {
   me: string;
+  /** Spreadsheet updates keyed by `${personId}|day|${date}` or `${personId}|week|${weekStart}`. */
+  sheets: Record<string, Sheet>;
   profiles: Record<string, Profile>;
   tasks: Task[];
   projects: Project[];
@@ -165,6 +178,7 @@ interface Actions {
   createConv: (name: string, memberIds: string[], group: boolean) => string;
   send: (convId: string, text: string) => void;
   reset: () => void;
+  saveSheet: (key: string, sheet: Sheet) => void;
 }
 
 const uid = () => Math.random().toString(36).slice(2, 10);
@@ -472,6 +486,7 @@ function seed(): Data {
     aliases: {},
     daily,
     weekly: seedWeekly(tasks),
+    sheets: {},
   };
 }
 
@@ -929,6 +944,7 @@ export const useStore = create<Data & Actions>()(
           set((st) => ({ aliases: { ...st.aliases, [key]: a }, msgs: [...st.msgs, { id: uid(), convId, alias: a, text: text.trim(), at: iso() }] }));
           if (conv.memberIds.length <= 6) conv.memberIds.filter((m) => m !== s.me).forEach((m) => notify(m, `New anonymous message in ${conv.group ? conv.name : 'a private chat'}`, 'chat'));
         },
+        saveSheet: (key, sheet) => set((st) => ({ sheets: { ...st.sheets, [key]: sheet } })),
         reset: () => set({ ...seed(), me: get().me }),
       };
     },
@@ -941,7 +957,7 @@ export const useStore = create<Data & Actions>()(
         const p = persisted as Partial<Data> | undefined;
         if (!p || !Array.isArray(p.tasks) || !Array.isArray(p.projects)) return current;
         if (p.projects.some((x) => !Array.isArray(x.admins) || !x.finalized) || p.tasks.some((t) => !Array.isArray(t.history))) return current;
-        return { ...current, ...p, projects: p.projects.map(rollPeriods) };
+        return { ...current, ...p, sheets: p.sheets ?? {}, projects: p.projects.map(rollPeriods) };
       },
     },
   ),

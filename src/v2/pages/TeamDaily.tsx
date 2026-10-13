@@ -4,6 +4,7 @@ import { PEOPLE, weekStartOf } from '../data';
 import { dailyCounts, dayTime, TEAM_IDS, weekTime, weeklyCounts } from '../analytics';
 import { nameOf, useStore } from '../store';
 import { Avatar, Bar, Card, Chip, cx } from '../ui';
+import UpdateSheet from './UpdateSheet';
 import { DateNav, dayHhmm, dayRows, hhmm, HoursLine, lastWorkingDay, PendingHint, ReportTable, targetsMet, weekLabel, weekRows, type Hours, type TvRow } from './DailyViews';
 
 type View = 'daily' | 'weekly';
@@ -65,6 +66,7 @@ export default function TeamDaily() {
   useStore((s) => s.profiles); // names can change
   const [view, setView] = useState<View>('daily');
   const [date, setDate] = useState(lastWorkingDay);
+  const [layout, setLayout] = useState<'cards' | 'sheets'>('sheets');
   const [filter, setFilter] = useState<Filter>('all');
   const mon = weekStartOf(date);
   const team = useMemo(() => [...TEAM_IDS].sort((a, b) => nameOf(a).localeCompare(nameOf(b))), []);
@@ -121,9 +123,25 @@ export default function TeamDaily() {
       )}
 
       {shown.length === 0 && <Card><p className="py-6 text-center text-muted">Everyone is in ✓</p></Card>}
-      <div className="grid grid-cols-1 items-start gap-5 lg:grid-cols-2">
-        {shown.map((r) => <PersonCard key={r.id} r={r} view={view} />)}
+      <div className="flex w-fit rounded-full bg-surface-2 p-1" role="tablist" aria-label="Cards or sheets">
+        {(['cards', 'sheets'] as const).map((v) => (
+          <button key={v} role="tab" aria-selected={layout === v} onClick={() => setLayout(v)} className={cx('focus-ring rounded-full px-4 py-1 text-xs font-semibold', layout === v ? 'bg-surface text-ink shadow-soft' : 'text-muted')}>{v === 'cards' ? 'Summary cards' : 'Full sheets'}</button>
+        ))}
       </div>
+      {layout === 'cards' ? (
+        <div className="grid grid-cols-1 items-start gap-5 lg:grid-cols-2">
+          {shown.map((r) => <PersonCard key={r.id} r={r} view={view} />)}
+        </div>
+      ) : (
+        <div className="space-y-5">
+          {shown.map((r) => (
+            <div key={r.id} className="space-y-2" data-person-sheet={r.id}>
+              <p className="flex items-center gap-2 font-bold"><Avatar id={r.id} size="sm" />{r.name}<span className="text-xs font-normal text-muted">{r.title}</span></p>
+              <UpdateSheet personId={r.id} kind={view === 'daily' ? 'day' : 'week'} date={date} readOnly />
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
