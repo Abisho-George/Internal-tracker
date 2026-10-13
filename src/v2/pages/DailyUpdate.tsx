@@ -211,7 +211,10 @@ export default function DailyUpdate() {
       <DayTaskLog personId={me} date={date} kind="week" />
 
       <div className="border-t-2 border-dashed border-line pt-5">
-        <h2 className="text-lg font-bold">Auto-filled updates</h2>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <h2 className="text-lg font-bold">Auto-filled updates</h2>
+          <DateNav date={date} onChange={setDate} />
+        </div>
         <p className="text-sm text-muted">Built from the daily and weekly tasks above and your assigned tasks. Targets against what got achieved, updated as you go.</p>
       </div>
 
@@ -221,12 +224,10 @@ export default function DailyUpdate() {
           view={<>
             <TargetsProgress personId={me} date={date} kind="day" />
             <TaskLine tasks={dayTasks} mode="assigned" />
-            <ReportTable rows={savedRows.rows} showTime label="Today's targets" empty="No tasks assigned for this day." />
             <NoteView label="Note" text={saved.sodNote} />
           </>}>
           <TargetsProgress personId={me} date={date} kind="day" />
           <TaskLine tasks={dayTasks} mode="assigned" />
-          <ReportTable rows={draftRows.rows} showTime label="Today's targets" empty="No tasks assigned for this day yet." />
           <CustomRows rows={sodCustom} onChange={setSodCustom} title="Custom targets" hint="anything else you're aiming for today" />
           <details className="rounded-xl border border-line p-3">
             <summary className="cursor-pointer text-sm font-semibold">Project numbers to hit <span className="font-normal text-muted">(optional: responses, calls, meetings)</span></summary>
@@ -241,16 +242,12 @@ export default function DailyUpdate() {
         <UpdateSection id="end-of-day" icon={EodIcon} tone="bg-lavender/50" title="End of day update" subtitle="Actuals fill in from the tasks you submitted"
           lockedAt={saved.eodAt} lockedLabel="Sent" editing={editEod} onEdit={() => setEditEod(true)}
           view={<>
-            <TargetsProgress personId={me} date={date} kind="day" />
             <TaskLine tasks={doneToday} mode="submitted" />
-            <ReportTable rows={savedRows.rows} showActual label="End of day" empty="No tasks or targets for this day." />
             <TimeBreakdown plan={saved.plan} extra={saved.extra ?? []} sent />
             <NoteView label="How it went" text={saved.eodNote} />
           </>}>
-          <TargetsProgress personId={me} date={date} kind="day" />
           <TimeBreakdown plan={plan} extra={cleanExtra(extra)} sent={false} />
           <TaskLine tasks={doneToday} mode="submitted" />
-          <ReportTable rows={savedRows.rows} showActual label="End of day" empty="No tasks or targets for this day." />
           {!sent && savedRows.rows.length > 0 && <PendingHint>Fills in when you send your end of day</PendingHint>}
           {plan.some((b) => b.custom) && (
             <div className="space-y-2">

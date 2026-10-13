@@ -12,6 +12,9 @@ export type LogKind = 'day' | 'week';
 const field = 'focus-ring w-full rounded-lg border border-line bg-surface px-2 py-1 text-sm text-ink';
 const num = 'focus-ring w-20 rounded-lg border border-line bg-surface px-2 py-1 text-right text-sm tabular-nums text-ink';
 const CUSTOM = '__custom';
+/** Rows for work outside any project use projectId `other:<name>`. */
+const OTHER = 'other:';
+export const groupName = (pid: string, projects: Project[]) => (pid.startsWith(OTHER) ? pid.slice(OTHER.length) : projects.find((p) => p.id === pid)?.name ?? pid);
 let eid = 0;
 const EDIT_EVENT = 'ls-edit-day-tasks';
 /** Opens the daily update for editing and scrolls to it. */
@@ -54,7 +57,10 @@ export default function DayTaskLog({ personId, date, plan, extra, readOnly, kind
   const extras = extra ?? (kind === 'day' ? (rec as ReturnType<typeof emptyDaily>).extra ?? [] : []);
   const [rows, setRows] = useState<TaskEntry[]>(saved);
   const [editing, setEditing] = useState(false);
-  useEffect(() => { setRows(saved); setEditing(false); }, [personId, key]); // eslint-disable-line react-hooks/exhaustive-deps
+  const [added, setAdded] = useState<string[]>([]);
+  const [pick, setPick] = useState('');
+  const [otherName, setOtherName] = useState('');
+  useEffect(() => { setRows(saved); setEditing(false); setAdded([]); }, [personId, key]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { if (!editing) setRows(saved); }, [rec.entries]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (readOnly || kind !== 'day') return;
@@ -85,8 +91,23 @@ export default function DayTaskLog({ personId, date, plan, extra, readOnly, kind
         .forEach((p) => planned.set(p.id, Math.round((p.hours[personId] ?? 0) * 60 * 5)));
     }
     list.forEach((e) => { if (!planned.has(e.projectId)) planned.set(e.projectId, 0); });
-    return [...planned].map(([pid, min]) => ({ project: projects.find((p) => p.id === pid)!, pid, planned: min })).filter((g) => g.project);
-  }, [kind, blocks, extras, list, projects, personId]);
+    added.forEach((pid) => { if (!planned.has(pid)) planned.set(pid, 0); });
+    return [...planned].map(([pid, min]) => ({ project: projects.find((p) => p.id === pid), pid, planned: min, name: groupName(pid, projects) })).filter((g) => g.project || g.pid.startsWith(OTHER));
+  }, [kind, blocks, extras, list, projects, personId, added]);
+  const addable = projects.filter((p) => p.status === 'active' && !groups.some((g) => g.pid === p.id));
+  const addGroup = (v: string) => {
+    if (!v) return;
+    let pid = v;
+    if (v === OTHER) {
+      const nm = otherName.trim();
+      if (!nm) { toast({ title: 'Type what the extra work was', tone: 'error' }); return; }
+      pid = `${OTHER}${nm}`;
+    }
+    setAdded((a) => [...a, pid]);
+    setEditing(true);
+    setRows((r) => [...r, blank(pid)]);
+    setOtherName(''); setPick('');
+  };
 
   const upd = (id: string, p: Partial<TaskEntry>) => setRows((r) => r.map((e) => (e.id === id ? { ...e, ...p } : e)));
   const fillFromPrev = (pid: string) => {
@@ -126,16 +147,16 @@ export default function DayTaskLog({ personId, date, plan, extra, readOnly, kind
       {groups.length === 0 && <p className="px-4 py-6 text-center text-sm text-muted">{readOnly ? `Nothing for this ${what}.` : kind === 'day' ? 'Add time blocks to your plan above and a table opens here for each project.' : 'You are not on any project yet.'}</p>}
 
       <div className="space-y-4 p-4">
-        {groups.map(({ project, pid, planned }) => {
+        {groups.map(({ project, pid, planned, name }) => {
           const opts = optionsFor(project);
           const mine = list.filter((e) => e.projectId === pid);
           const est = mine.reduce((a, e) => a + e.estMin, 0);
           const act = mine.reduce((a, e) => a + (e.actualMin ?? 0), 0);
           const done = (e: TaskEntry) => (kind === 'week' ? weekDone(e, personId, mon, daily) : e.doneQty);
           return (
-            <section key={pid} data-project-log={pid} data-kind={kind} className="overflow-hidden rounded-xl border border-line" style={{ borderLeft: `5px solid ${colorOf(projects, pid)}` }}>
+            <section key={pid} data-project-log={pid} data-kind={kind} className="overflow-hidden rounded-xl border border-line" style={{ borderLeft: `5px solid ${project ? colorOf(projects, pid) : '#64748B'}` }}>
               <div className="flex flex-wrap items-center justify-between gap-2 bg-surface-2/60 px-3 py-2">
-                <p className="font-semibold">{project.name}</p>
+                <p className="font-semibold">{name}{!project && <span className="ml-2 rounded bg-surface px-1.5 py-0.5 text-[10px] font-bold text-muted">OTHER WORK</span>}</p>
                 <span className="flex flex-wrap items-center gap-2">
                   {planned > 0 && <span className="text-xs text-muted">Planned <b className="text-ink">{fmtMin(planned)}</b></span>}
                   {edit && <button className="focus-ring flex items-center gap-1 rounded-full border border-line bg-surface px-2.5 py-0.5 text-xs font-semibold text-accent-ink hover:bg-surface-2" onClick={() => fillFromPrev(pid)}>
@@ -143,14 +164,14 @@ export default function DayTaskLog({ personId, date, plan, extra, readOnly, kind
                   </button>}
                 </span>
               </div>
-              {kind === 'week' && !readOnly && canManage(project, personId) && (
+              {kind === 'week' && !readOnly && project && canManage(project, personId) && (
                 <details className="border-b border-line px-3 py-2">
                   <summary className="cursor-pointer text-xs font-semibold text-accent-ink">Project number targets for the week (shows on the Projects tab)</summary>
                   <div className="mt-2"><WeekPlanner p={project} date={date} /></div>
                 </details>
               )}
               <div className="overflow-x-auto">
-                <table className="w-full min-w-[920px] text-sm" aria-label={`${project.name} ${what} tasks`}>
+                <table className="w-full min-w-[920px] text-sm" aria-label={`${name} ${what} tasks`}>
                   <thead>
                     <tr className="text-left text-[11px] font-semibold uppercase tracking-wide text-muted">
                       <th className="w-48 px-2 py-1.5">Task</th><th className="px-2 py-1.5">Description <span className="normal-case">(optional)</span></th>
@@ -206,6 +227,21 @@ export default function DayTaskLog({ personId, date, plan, extra, readOnly, kind
         })}
       </div>
 
+      {!readOnly && (
+        <div className="flex flex-wrap items-center gap-2 border-t border-line px-4 py-3" aria-label="Add a project">
+          <span className="text-sm font-semibold">Worked on something else?</span>
+          <select aria-label="Add project" className="focus-ring rounded-lg border border-line bg-surface px-2 py-1 text-sm text-ink" value={pick} onChange={(e) => { setPick(e.target.value); if (e.target.value !== OTHER) addGroup(e.target.value); }}>
+            <option value="">Add a project...</option>
+            {addable.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+            <option value={OTHER}>Other work (not a project)...</option>
+          </select>
+          {pick === OTHER && <>
+            <input aria-label="Other work name" autoFocus className="focus-ring w-56 rounded-lg border border-line bg-surface px-2 py-1 text-sm" placeholder="e.g. Hiring, internal training" value={otherName} onChange={(e) => setOtherName(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && addGroup(OTHER)} />
+            <Btn tone="soft" onClick={() => addGroup(OTHER)}><Plus size={13} /> Add</Btn>
+          </>}
+        </div>
+      )}
+
       {groups.length > 0 && (
         <div className="flex flex-wrap items-center gap-3 border-t border-line px-4 py-3">
           <p className="text-sm">{kind === 'day' ? 'Day' : 'Week'} total: planned <b>{fmtMin(plannedAll)}</b> · estimated <b data-testid={`${kind}-est`}>{fmtMin(all.est)}</b> · actual <b data-testid={`${kind}-act`}>{fmtMin(all.act)}</b></p>
@@ -250,10 +286,11 @@ export function TargetsProgress({ personId, date, kind }: { personId: string; da
       {pids.map((pid) => {
         const p = projects.find((x) => x.id === pid);
         const rows = list.filter((e) => e.projectId === pid);
+        const gname = groupName(pid, projects);
         const s = sum(rows.filter((e) => (e.qty ?? 0) > 0));
         return (
-          <div key={pid} className="rounded-lg bg-surface-2/40 p-2" style={{ borderLeft: `4px solid ${colorOf(projects, pid)}` }}>
-            <p className="mb-1 flex items-center justify-between text-xs font-semibold"><span>{p?.name}</span><span className="tabular-nums">{s.d}/{s.t} · {pct(s.d, s.t)}%</span></p>
+          <div key={pid} className="rounded-lg bg-surface-2/40 p-2" style={{ borderLeft: `4px solid ${p ? colorOf(projects, pid) : '#64748B'}` }}>
+            <p className="mb-1 flex items-center justify-between text-xs font-semibold"><span>{gname}</span><span className="tabular-nums">{s.d}/{s.t} · {pct(s.d, s.t)}%</span></p>
             <ul className="space-y-1">
               {rows.map((e) => {
                 const d = done(e);
