@@ -464,6 +464,94 @@ function seedDaily(projects: Project[], tasks: Task[]): Record<string, DailyUpda
   return out;
 }
 
+/** Daily and weekly task rows (targets, estimates, actuals, achieved, remarks) for everyone on the team. */
+function seedEntries(projects: Project[], daily: Record<string, DailyUpdate>, weekly: Record<string, WeeklyUpdate>) {
+  let r = 7;
+  const rnd = () => ((r = (r * 9301 + 49297) % 233280) / 233280);
+  const POOL: { task: string; custom?: string; qty: [number, number]; per: number; desc: string }[] = [
+    { task: 'prospect', qty: [20, 40], per: 2, desc: 'CFO and VP Finance list' },
+    { task: 'l1', qty: [25, 45], per: 2, desc: 'Personalised, tier 1 accounts' },
+    { task: 'l2', qty: [20, 40], per: 1.5, desc: 'Replies to last week\'s openers' },
+    { task: 'followup', qty: [20, 35], per: 1.2, desc: 'No-reply follow-ups' },
+    { task: 'whatsapp', qty: [20, 40], per: 1, desc: 'Warm leads' },
+    { task: 'email', qty: [15, 30], per: 2, desc: 'Event invite batch' },
+    { task: 'model', qty: [5, 12], per: 3, desc: 'Lookalike model refresh' },
+    { task: '__custom', custom: 'Client call prep', qty: [1, 2], per: 30, desc: 'Agenda and notes' },
+    { task: '__custom', custom: 'CRM clean-up', qty: [30, 60], per: 0.5, desc: 'Dedupe and tag' },
+  ];
+  const REMARKS = ['', '', 'Smooth', 'List quality was low', 'Client asked for changes', 'Carried the rest to tomorrow', 'Faster than planned', 'CRM was slow'];
+  const team = PEOPLE.filter((x) => x.role === 'resource' || x.role === 'pm').map((x) => x.id);
+  const nowIso = new Date().toISOString();
+  const days = [...pastWorkingDays(12, day(0)), ...(isWorkingDay(day(0)) ? [day(0)] : [])];
+  const mkId = (k: string) => `se-${k}-${Math.floor(rnd() * 1e9).toString(36)}`;
+  const pickRows = (pid: string, minutes: number, k: string, past: boolean): TaskEntry[] => {
+    const n = minutes >= 240 ? 3 : minutes >= 120 ? 2 : 1;
+    const used = new Set<number>();
+    const rows: TaskEntry[] = [];
+    while (rows.length < n) {
+      const i = Math.floor(rnd() * POOL.length);
+      if (used.has(i)) continue;
+      used.add(i);
+      const t = POOL[i];
+      const qty = Math.round(t.qty[0] + rnd() * (t.qty[1] - t.qty[0]));
+      const est = Math.max(15, Math.round((qty * t.per) / 5) * 5);
+      const ratio = 0.7 + rnd() * 0.4;
+      rows.push({
+        id: mkId(k), projectId: pid, task: t.task, custom: t.custom, desc: t.desc, qty, estMin: est,
+        actualMin: past ? Math.round((est * (0.8 + rnd() * 0.5)) / 5) * 5 : undefined,
+        doneQty: past ? Math.min(qty, Math.round(qty * ratio)) : undefined,
+        achieved: '', remarks: past ? REMARKS[Math.floor(rnd() * REMARKS.length)] : '',
+      });
+    }
+    return rows;
+  };
+  team.forEach((who) => {
+    const mine = projects.filter((p) => p.status === 'active' && (p.pmId === who || p.teamIds.includes(who)));
+    days.forEach((d) => {
+      const key = `${who}|${d}`;
+      const rec = daily[key] ?? { ...emptyDaily() };
+      if (rec.entries?.length) return;
+      // Minutes per project from the plan (or the person's project hours when there is no plan).
+      const per = new Map<string, number>();
+      rec.plan.forEach((b) => { const pid = b.custom?.projectId ?? b.projectId; if (pid) per.set(pid, (per.get(pid) ?? 0) + Math.max(0, toMinutes(b.end) - toMinutes(b.start))); });
+      (rec.extra ?? []).forEach((x) => { if (x.projectId) per.set(x.projectId, (per.get(x.projectId) ?? 0) + x.minutes); });
+      if (!per.size) mine.forEach((p) => per.set(p.id, Math.round((p.hours[who] ?? 2) * 60)));
+      const today = d === day(0);
+      const sent = today ? !!rec.eodAt && rec.eodAt <= nowIso : true;
+      const entries = [...per].flatMap(([pid, m]) => pickRows(pid, m, who, sent));
+      // Today, before the end of day is sent: some progress already recorded, in line with the time of day.
+      if (today && !sent) {
+        const h = new Date().getHours() + new Date().getMinutes() / 60;
+        const frac = Math.min(0.9, Math.max(0.25, (h - 10) / 9));
+        entries.forEach((e) => { e.doneQty = Math.round((e.qty ?? 0) * frac * (0.8 + rnd() * 0.3)); });
+      }
+      const lockedAt = new Date(`${d}T10:${String(5 + Math.floor(rnd() * 20)).padStart(2, '0')}:00`).toISOString();
+      daily[key] = { ...rec, entries, entriesAt: lockedAt <= nowIso ? lockedAt : undefined, sodAt: rec.sodAt ?? (lockedAt <= nowIso ? lockedAt : undefined) };
+    });
+    // Weekly targets: this week and the two before, per project, roughly five days of work.
+    [0, -1, -2].forEach((w) => {
+      const mon = weekStart(w);
+      const key = `${who}|${mon}`;
+      const rec = weekly[key] ?? emptyWeekly();
+      // Built from that week's daily rows (same tasks), so achieved adds up from the days automatically.
+      const ds = [0, 1, 2, 3, 4].map((i) => addDays(mon, i)).filter((d) => daily[`${who}|${d}`]?.entries?.length);
+      const groups = new Map<string, TaskEntry>();
+      ds.forEach((d) => daily[`${who}|${d}`]!.entries!.forEach((e) => {
+        const k = `${e.projectId}|${e.task}|${e.custom ?? ''}`;
+        const g = groups.get(k);
+        if (g) { g.qty = (g.qty ?? 0) + (e.qty ?? 0); g.estMin += e.estMin; g.actualMin = (g.actualMin ?? 0) + (e.actualMin ?? 0); }
+        else groups.set(k, { ...e, id: mkId(`${who}w`), actualMin: e.actualMin ?? 0, doneQty: undefined, remarks: '' });
+      }));
+      const scale = ds.length ? 5 / ds.length : 1;
+      const entries = [...groups.values()].map((e) => ({
+        ...e, qty: Math.round(((e.qty ?? 0) * scale) / 5) * 5, estMin: Math.round((e.estMin * scale) / 15) * 15,
+        actualMin: w < 0 && e.actualMin ? e.actualMin : undefined, remarks: w < 0 ? REMARKS[Math.floor(rnd() * REMARKS.length)] : '',
+      }));
+      weekly[key] = { ...rec, entries, entriesAt: new Date(`${mon}T10:30:00`).toISOString() <= nowIso ? new Date(`${mon}T10:30:00`).toISOString() : undefined };
+    });
+  });
+}
+
 function seed(): Data {
   const ago = (m: number) => new Date(Date.now() - m * 60000).toISOString();
   let projects = seedProjects();
@@ -474,6 +562,23 @@ function seed(): Data {
     const [who, date] = key.split('|');
     projects = finalizeFor(projects, who, date, d.eodAt, daily);
   });
+  const weekly = seedWeekly(tasks);
+  seedEntries(projects, daily, weekly);
+  // Shared links on work waiting for review, and two approvals sent without an assigned task.
+  tasks.filter((t) => t.status === 'in_review').forEach((t, i) => {
+    t.links = i % 2 === 0 ? [`https://docs.google.com/spreadsheets/d/ls-${t.id}/edit`] : [`https://docs.google.com/spreadsheets/d/ls-${t.id}/edit`, 'https://drive.google.com/drive/folders/ls-proof'];
+  });
+  const adhocAt = (m: number) => new Date(Date.now() - m * 60000).toISOString();
+  const adhoc = (id: string, who: string, to: string, pid: string, title: string, links: string[], note: string, m: number): Task => ({
+    id, typeId: 'custom', customName: title, unit: 'task', qty: 1, doneQty: 1, targetMinutes: 45, minutes: 45, standardMinutes: 45, projectId: pid,
+    assigneeId: who, assignedById: who, reviewerId: to, priority: false, status: 'in_review', adhoc: true, links,
+    feedback: [{ by: who, text: note, at: adhocAt(m) }], createdAt: adhocAt(m), date: day(0), reminders: 0, reviews: [], title,
+    history: [{ at: adhocAt(m), by: who, action: 'submitted', to, note }], resubmits: 0, submittedAt: adhocAt(m),
+  });
+  tasks.unshift(
+    adhoc('adhoc1', 'bharath', 'bheeshma', 'northwind', 'Northwind objection handling sheet', ['https://docs.google.com/spreadsheets/d/northwind-objections/edit'], 'Built this after the calls today, can we share it with the team?', 35),
+    adhoc('adhoc2', 'sachi', 'alok', 'helios', 'Helios CFO list v2', ['https://docs.google.com/spreadsheets/d/helios-cfo-v2/edit', 'https://www.linkedin.com/sales/lists/helios-cfo'], 'Added 40 new CFOs from the fintech report.', 80),
+  );
   return {
     me: 'udhaya',
     profiles: {},
@@ -500,7 +605,7 @@ function seed(): Data {
     ],
     aliases: {},
     daily,
-    weekly: seedWeekly(tasks),
+    weekly,
     sheets: {},
   };
 }
@@ -982,7 +1087,7 @@ export const useStore = create<Data & Actions>()(
     },
     {
       name: 'ls-tracker-v2',
-      version: 10,
+      version: 11,
       // Old or unreadable saved data falls back to a fresh demo instead of crashing.
       migrate: () => seed() as never,
       merge: (persisted, current) => {
