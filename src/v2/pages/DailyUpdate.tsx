@@ -7,6 +7,7 @@ import { defaultPlan, emptyDaily, first, LUNCH, useStore, type CustomRow, type D
 import { Btn, Card, cx, fmtMin, input, safe } from '../ui';
 import { colorOf, DayTracker } from './Widgets';
 import { AUTO_METRICS, CustomRows, DateNav, dayRows, DurationInput, HoursStats, lastWorkingDay, NoteView, PendingHint, ReportTable } from './DailyViews';
+import { PlanBuilder } from './PlanBuilder';
 import DayTaskLog, { TargetsProgress } from './DayTaskLog';
 import { EodIcon, SodIcon, SUBMITTED, TaskLine, TimeBreakdown, UpdateSection, WeeklySections } from './TaskUpdateSections';
 
@@ -115,60 +116,7 @@ export default function DailyUpdate() {
             <h2 className="text-base font-bold">Plan your day</h2>
             <HoursStats t={time} sent={sent} />
           </div>
-          <DayTracker blocks={plan} extra={extra} loggedMinutes={doneToday.reduce((s, t) => s + (t.minutes ?? 0), 0)} />
-
-          <div className="mt-5 space-y-2">
-            {plan.length === 0 && <p className="text-sm text-muted">Split your day into time blocks. Pick a project for each, or "★ Custom / priority" for anything urgent.</p>}
-            {plan.length > 0 && (
-              <div className="hidden items-center gap-2 pl-4 pr-3 text-[11px] font-semibold uppercase tracking-wide text-muted sm:flex" aria-hidden>
-                <span className="w-[5.5rem]">Start</span><span className="w-4" /><span className="w-[5.5rem]">End</span>
-                <span className="min-w-[12rem] flex-1">What</span><span className="w-14 text-right">Planned</span><span className="w-24 text-right">Actual</span><span className="w-8" />
-              </div>
-            )}
-            {[...plan, LUNCH_ROW].sort((a, b) => a.start.localeCompare(b.start)).map((b) => {
-              if (b.id === 'lunch') return (
-                <div key="lunch" className="flex items-center gap-2 rounded-xl border border-dashed border-line bg-surface-2 py-2 pl-4 pr-3 text-sm text-muted">
-                  <span className="w-[12.5rem] font-semibold tabular-nums">13:00 to 14:00</span><span>🍽 Lunch break, every day</span>
-                </div>
-              );
-              const c = b.custom;
-              const color = c ? (c.priority ? '#DC2626' : '#64748B') : colorOf(projects, b.projectId);
-              const planned = blockMin(b);
-              return (
-                <div key={b.id} data-block={b.id} className={cx('rounded-xl border py-2 pl-2.5 pr-3', c?.priority ? 'border-coral-strong/40 bg-coral/20' : 'border-line')} style={{ borderLeft: `6px solid ${color}` }}>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <select aria-label="Start" className={cx(field, 'w-[5.5rem]')} value={b.start} onChange={(e) => upd(b.id, { start: e.target.value })}>{TIMES.slice(0, -1).map((t) => <option key={t}>{t}</option>)}</select>
-                    <span className="w-4 text-center text-muted">→</span>
-                    <select aria-label="End" className={cx(field, 'w-[5.5rem]')} value={b.end} onChange={(e) => upd(b.id, { end: e.target.value })}>{TIMES.slice(1).map((t) => <option key={t}>{t}</option>)}</select>
-                    <select aria-label="What" className={cx(field, 'min-w-[12rem] flex-1')} value={c ? '__custom' : b.projectId}
-                      onChange={(e) => e.target.value === '__custom'
-                        ? upd(b.id, { projectId: '', taskIds: [], custom: { title: '', priority: true, targetQty: 0, unit: '' } })
-                        : upd(b.id, { projectId: e.target.value, taskIds: [], custom: undefined })}>
-                      <optgroup label="Projects">{myProjects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}</optgroup>
-                      <optgroup label="Something else"><option value="__custom">★ Custom / priority…</option></optgroup>
-                    </select>
-                    <span className="w-14 text-right text-sm tabular-nums text-muted" title="Planned time">{fmtMin(planned)}</span>
-                    <DurationInput label="Actual time" className="w-24" placeholder={`e.g. ${fmtMin(planned)}`} value={b.actualMinutes} onChange={(m) => upd(b.id, { actualMinutes: m })} />
-                    <button aria-label="Remove block" className="focus-ring w-8 rounded-lg p-1.5 text-muted hover:bg-surface-2 hover:text-coral-ink" onClick={() => setPlan((x) => x.filter((y) => y.id !== b.id))}><Trash2 size={15} /></button>
-                  </div>
-                  {c && (
-                    <div className="mt-2 flex flex-wrap items-center gap-2">
-                      <input aria-label="Custom block title" className={cx(field, 'min-w-[200px] flex-1')} placeholder="What came up? e.g. Urgent client deck revision" value={c.title} onChange={(e) => updC(b.id, { title: e.target.value })} />
-                      <input aria-label="Target quantity" type="number" min={0} className={cx(field, 'w-20 text-right')} value={c.targetQty || ''} placeholder="Target" onChange={(e) => updC(b.id, { targetQty: Math.max(0, +e.target.value || 0) })} />
-                      <input aria-label="Target unit" className={cx(field, 'w-28')} placeholder="unit" value={c.unit} onChange={(e) => updC(b.id, { unit: e.target.value })} />
-                      <button aria-pressed={c.priority} onClick={() => updC(b.id, { priority: !c.priority })} className={cx('focus-ring flex items-center gap-1 rounded-full border px-3 py-1 text-xs font-semibold', c.priority ? 'border-coral-strong bg-coral text-coral-ink' : 'border-line text-muted')}>
-                        <Star size={12} fill={c.priority ? 'currentColor' : 'none'} /> Priority
-                      </button>
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-          <div className="mt-3 flex flex-wrap gap-2">
-            <Btn tone="soft" onClick={addBlock}><Plus size={14} /> Add time block</Btn>
-            <Btn tone="ghost" className="border border-line" onClick={() => setPlan(defaultPlan(projects, me))}><Wand2 size={14} /> Fill from my project hours</Btn>
-          </div>
+          <PlanBuilder plan={plan} setPlan={setPlan} extra={extra} personId={me} date={date} />
 
           <div className="mt-6 border-t border-line pt-4" aria-label="Extra hours" role="group">
             <div className="flex flex-wrap items-baseline justify-between gap-2">

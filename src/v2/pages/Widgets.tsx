@@ -43,7 +43,7 @@ export function DayTracker({ blocks, loggedMinutes, extra = [] }: { blocks: DayB
           const w = ((toMin(b.end) - toMin(b.start)) / span) * 100;
           return (
             <div key={b.id} className="absolute inset-y-0 flex items-center justify-center truncate border-r-2 border-surface px-2 text-[11px] font-semibold text-white" style={{ left: `${l}%`, width: `${w}%`, background: b.custom ? (b.custom.priority ? '#DC2626' : '#64748B') : colorOf(projects, b.projectId), ...deco(colorOf(projects, b.projectId)), ...(b.custom ? { backgroundImage: 'repeating-linear-gradient(45deg, rgb(255 255 255 / 0.12) 0 6px, transparent 6px 12px)' } : {}) }} title={`${b.start} to ${b.end} · ${b.custom ? b.custom.title : p?.name}`}>
-              {b.custom ? `${b.custom.priority ? '★ ' : ''}${b.custom.title}` : p?.client} · {b.start} to {b.end}
+              {b.custom ? `${b.custom.priority ? '★ ' : ''}${b.custom.title}` : p?.client ?? b.projectId.replace('other:', '')} · {b.start} to {b.end}
             </div>
           );
         })}
