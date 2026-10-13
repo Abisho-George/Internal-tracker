@@ -112,7 +112,12 @@ export interface DailyUpdate {
   extra: ExtraHours[];
   /** Target vs actual by task type, frozen automatically when the end-of-day update is sent. */
   eodSnapshot?: Snapshot;
+  /** Task rows for each project in the day plan; locked when entriesAt is set. */
+  entries?: TaskEntry[];
+  entriesAt?: string;
 }
+/** One task row under a planned project: picked from the list (task type or project standard) or typed in. */
+export interface TaskEntry { id: string; projectId: string; task: string; custom?: string; desc: string; estMin: number; actualMin?: number; achieved: string; remarks: string }
 export interface CustomRow { id: string; label: string; qty: number }
 export const emptyDaily = (): DailyUpdate => ({ plan: [], sodNote: '', sodTargets: {}, eodNote: '', eodActuals: {}, sodCustom: [], eodCustom: [], extra: [] });
 

@@ -7,7 +7,7 @@ import { defaultPlan, emptyDaily, first, LUNCH, useStore, type CustomRow, type D
 import { Btn, Card, cx, fmtMin, input, safe } from '../ui';
 import { colorOf, DayTracker } from './Widgets';
 import { AUTO_METRICS, CustomRows, DateNav, dayRows, DurationInput, HoursStats, lastWorkingDay, NoteView, PendingHint, ReportTable } from './DailyViews';
-import UpdateSheet, { type SheetKind } from './UpdateSheet';
+import DayTaskLog from './DayTaskLog';
 import { EodIcon, SodIcon, SUBMITTED, TaskLine, TimeBreakdown, UpdateSection, WeeklySections } from './TaskUpdateSections';
 
 const TIMES = Array.from({ length: 19 }, (_, i) => `${String(10 + Math.floor(i / 2)).padStart(2, '0')}:${i % 2 ? '30' : '00'}`);
@@ -57,7 +57,6 @@ export default function DailyUpdate() {
   const [eodActuals, setEodActuals] = useState<ProjectNumbers>(saved.eodActuals);
   const [sodCustom, setSodCustom] = useState<CustomRow[]>(saved.sodCustom ?? []);
   const [eodCustom, setEodCustom] = useState<CustomRow[]>(saved.eodCustom ?? []);
-  const [sheetKind, setSheetKind] = useState<SheetKind>('week');
   const [editSod, setEditSod] = useState(false);
   const [editEod, setEditEod] = useState(false);
   // Reload the form when switching person or date.
@@ -109,14 +108,6 @@ export default function DailyUpdate() {
         <DateNav date={date} onChange={setDate} />
       </div>
 
-      <section aria-label="Update sheets" className="space-y-4">
-        <div className="flex w-fit rounded-full bg-surface-2 p-1" role="tablist" aria-label="Daily or weekly sheet">
-          {(['week', 'day'] as const).map((v) => (
-            <button key={v} role="tab" aria-selected={sheetKind === v} onClick={() => setSheetKind(v)} className={cx('focus-ring rounded-full px-5 py-1.5 text-sm font-semibold', sheetKind === v ? 'bg-accent text-accent-on shadow-soft' : 'text-muted')}>{v === 'week' ? 'Weekly sheet' : 'Daily sheet'}</button>
-          ))}
-        </div>
-        <UpdateSheet personId={me} kind={sheetKind} date={date} />
-      </section>
 
       <section id="plan-your-day" aria-label="Plan your day" className="scroll-mt-20">
         <Card>
@@ -215,6 +206,8 @@ export default function DailyUpdate() {
           </div>
         </Card>
       </section>
+
+      <DayTaskLog personId={me} date={date} plan={plan} />
 
       <div className="grid grid-cols-1 items-start gap-6 xl:grid-cols-2">
         <UpdateSection id="todays-targets" icon={SodIcon} tone="bg-butter/50" title="Today's targets" subtitle="Built from the tasks your project managers gave you"
