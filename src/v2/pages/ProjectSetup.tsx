@@ -88,7 +88,7 @@ export function ProjectSetup({ open, onClose, edit }: { open: boolean; onClose: 
     }
   }, [open, edit]);
 
-  const weeks = useMemo(() => (startDate && endDate && endDate >= startDate ? projectWeeks({ startDate, endDate }, 0).filter((w) => w.start <= endDate) : []), [startDate, endDate]);
+  const weeks = useMemo(() => (startDate && endDate && endDate >= startDate ? projectWeeks({ startDate, endDate }) : []), [startDate, endDate]);
   const shownWeeks = allWeeks || weeks.length <= 9 ? weeks : weeks.slice(0, 8);
 
   const resetCreate = () => {
@@ -198,14 +198,14 @@ export function ProjectSetup({ open, onClose, edit }: { open: boolean; onClose: 
       </div>
 
       <Section icon={<CalendarRange size={15} className="text-accent" />} title="Project weeks"
-        hint={weeks.length ? <>Weeks are numbered from the start date, Monday to Friday. {edit ? 'Pre-plan targets for any week in the Targets tab.' : 'Once the project is live you can pre-plan targets for each week in its Targets tab.'}</> : undefined}>
+        hint={weeks.length ? <>Split automatically into 7-day weeks from the start date to the end date. Weekly targets are planned in Tasks update, under Weekly targets.</> : undefined}>
         {weeks.length === 0 ? <p className="text-xs font-semibold text-coral-ink">Pick a start date and an end date after it to see the weeks.</p> : (
           <>
             <p className="mb-2 text-xs text-muted"><b className="text-ink">{weeks.length} week{weeks.length === 1 ? '' : 's'}</b> from {fmtDay(weeks[0].start)} to {fmtDay(weeks[weeks.length - 1].end)}</p>
             <ul className="flex flex-wrap gap-1.5" aria-label="Week preview">
               {shownWeeks.map((w) => (
-                <li key={w.start} className={cx('rounded-lg border px-2 py-1 text-xs', w.start === weekStart(0) ? 'border-accent bg-accent-soft font-semibold text-accent-ink' : 'border-line bg-surface text-ink')}>
-                  {w.label}{w.start === weekStart(0) ? ' (this week)' : w.start === weekStart(1) ? ' (next week)' : ''}
+                <li key={w.start} className={cx('rounded-lg border px-2 py-1 text-xs', w.start <= day(0) && day(0) <= w.end ? 'border-accent bg-accent-soft font-semibold text-accent-ink' : 'border-line bg-surface text-ink')}>
+                  {w.label}{w.start <= day(0) && day(0) <= w.end ? ' (this week)' : w.start === weekStart(1) ? ' (next week)' : ''}
                 </li>
               ))}
               {weeks.length > 9 && (
@@ -215,38 +215,6 @@ export function ProjectSetup({ open, onClose, edit }: { open: boolean; onClose: 
           </>
         )}
       </Section>
-
-      {!edit && weeks.length > 0 && (() => {
-        const pw = weeks.some((w) => w.start === planWs) ? planWs : weeks[0].start;
-        const cur = plans[pw] ?? {};
-        return (
-          <Section icon={<span>📅</span>} title="Plan the weeks" hint="Set a default weekly target, then pre-plan any of the first weeks if it should differ. Blank fields use the default. Saved with the project.">
-            <p className="mb-1.5 text-xs font-bold uppercase tracking-wide text-muted">Default weekly target</p>
-            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-              {METRICS.map((m) => (
-                <label key={m.id} className="rounded-xl border border-line bg-surface p-2 text-xs font-semibold text-ink">
-                  <span className="block truncate" title={m.label}>{m.label}</span>
-                  <input type="number" min={0} inputMode="numeric" aria-label={`${m.label} default weekly target`} className={cx(numField, 'mt-1 w-full text-base')} placeholder="0" value={weekT[m.id] ?? ''} onChange={(e) => setWeekT({ ...weekT, [m.id]: e.target.value })} />
-                </label>
-              ))}
-            </div>
-            <div className="mt-3 flex flex-wrap items-center gap-2">
-              <p className="text-xs font-bold uppercase tracking-wide text-muted">Pre-plan</p>
-              <select aria-label="Pre-plan week" className={pickerCls} value={pw} onChange={(e) => setPlanWs(e.target.value)}>
-                {weeks.slice(0, 8).map((w) => <option key={w.start} value={w.start}>{w.label}{plans[w.start] && Object.values(plans[w.start]).some((v) => v.trim()) ? ' · planned' : ''}</option>)}
-              </select>
-            </div>
-            <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-4">
-              {METRICS.map((m) => (
-                <label key={m.id} className="rounded-xl border border-line bg-surface p-2 text-xs font-semibold text-ink">
-                  <span className="block truncate" title={m.label}>{m.label}</span>
-                  <input type="number" min={0} inputMode="numeric" aria-label={`${m.label} target for the planned week`} className={cx(numField, 'mt-1 w-full text-base')} placeholder={weekT[m.id] || 'default'} value={cur[m.id] ?? ''} onChange={(e) => setPlans({ ...plans, [pw]: { ...cur, [m.id]: e.target.value } })} />
-                </label>
-              ))}
-            </div>
-          </Section>
-        );
-      })()}
 
       <Section icon={<span>⏱️</span>} title="Standard time for this project" hint="Every target time and on-time % for this project is measured against these. Different projects can have different standards.">
         <div className="grid gap-3 sm:grid-cols-3">

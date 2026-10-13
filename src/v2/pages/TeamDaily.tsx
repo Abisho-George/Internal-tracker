@@ -5,6 +5,7 @@ import { dailyCounts, dayTime, TEAM_IDS, weekTime, weeklyCounts } from '../analy
 import { nameOf, useStore } from '../store';
 import { Avatar, Bar, Card, Chip, cx } from '../ui';
 import DayTaskLog from './DayTaskLog';
+import WeekByProject from './WeekByProject';
 import { DateNav, dayHhmm, dayRows, hhmm, HoursLine, lastWorkingDay, PendingHint, ReportTable, targetsMet, weekLabel, weekRows, type Hours, type TvRow } from './DailyViews';
 
 type View = 'daily' | 'weekly';
@@ -123,12 +124,12 @@ export default function TeamDaily() {
       )}
 
       {shown.length === 0 && <Card><p className="py-6 text-center text-muted">Everyone is in ✓</p></Card>}
-      {view === 'daily' && <div className="flex w-fit rounded-full bg-surface-2 p-1" role="tablist" aria-label="Cards or sheets">
+      {<div className="flex w-fit rounded-full bg-surface-2 p-1" role="tablist" aria-label="Cards or sheets">
         {(['cards', 'sheets'] as const).map((v) => (
           <button key={v} role="tab" aria-selected={layout === v} onClick={() => setLayout(v)} className={cx('focus-ring rounded-full px-4 py-1 text-xs font-semibold', layout === v ? 'bg-surface text-ink shadow-soft' : 'text-muted')}>{v === 'cards' ? 'Summary cards' : 'Task updates'}</button>
         ))}
       </div>}
-      {layout === 'cards' || view === 'weekly' ? (
+      {layout === 'cards' ? (
         <div className="grid grid-cols-1 items-start gap-5 lg:grid-cols-2">
           {shown.map((r) => <PersonCard key={r.id} r={r} view={view} />)}
         </div>
@@ -137,7 +138,7 @@ export default function TeamDaily() {
           {shown.map((r) => (
             <div key={r.id} className="space-y-2" data-person-sheet={r.id}>
               <p className="flex items-center gap-2 font-bold"><Avatar id={r.id} size="sm" />{r.name}<span className="text-xs font-normal text-muted">{r.title}</span></p>
-              <DayTaskLog personId={r.id} date={date} readOnly />
+              {view === 'daily' ? <DayTaskLog personId={r.id} date={date} readOnly /> : <WeekByProject personId={r.id} date={date} readOnly />}
             </div>
           ))}
         </div>

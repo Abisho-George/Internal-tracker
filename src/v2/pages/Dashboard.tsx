@@ -7,7 +7,7 @@ import { first, onTimeRate, useStore, nameOf } from '../store';
 import { Link } from 'react-router-dom';
 import { Greeting } from './Greeting';
 import { Avatar, Btn, Card, Chip, H2, PROJECT_COLORS, ago, cx, safe } from '../ui';
-import { DIFFICULTY_TONE, ReviewRow, TaskRow } from './TaskCard';
+import { DIFFICULTY_TONE, ReviewRow, SendForApproval, TaskRow } from './TaskCard';
 import { Timeline } from './Timeline';
 import { DayTracker, ProjectBlock, Spotlights, TargetsTable } from './Widgets';
 
@@ -16,13 +16,13 @@ const ORDER = { changes: 0, in_progress: 1, todo: 2, in_review: 3, done: 4 } as 
 function ReviewQueue() {
   const { me, tasks, projects } = useStore();
   const list = tasks.filter((t) => t.reviewerId === me && t.status === 'in_review').sort((a, b) => Number(b.priority) - Number(a.priority));
-  if (!list.length) return null;
   return (
     <Card className="p-0">
-      <div className="flex items-center justify-between border-b border-line px-5 py-3">
-        <h2 className="font-bold">Waiting for your review</h2>
-        <Chip tone="lavender">{list.length}</Chip>
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-line px-5 py-3">
+        <h2 className="flex items-center gap-2 font-bold">Waiting for your review <Chip tone="lavender">{list.length}</Chip></h2>
+        <SendForApproval />
       </div>
+      {!list.length && <p className="px-5 py-3 text-sm text-muted">Nothing to review. Use Send for approval for work that was not assigned.</p>}
       <ul className="divide-y divide-line">{list.map((t) => <ReviewRow key={t.id} task={t} projectName={projects.find((p) => p.id === t.projectId)?.name ?? ''} />)}</ul>
     </Card>
   );

@@ -239,8 +239,8 @@ export const isOwner = (p: Pick<Project, 'pmId'> | undefined, personId: string) 
 export const isAdmin = (p: Pick<Project, 'admins'> | undefined, personId: string) => !!p?.admins?.includes(personId);
 
 /** The weekly target in force for a given week: its saved plan, or the default weekly target. */
-export function weekTargetFor(p: Pick<Project, 'weekPlans' | 'weekTarget'>, weekStartDate: string): Counts {
-  return p.weekPlans?.[weekStartOf(weekStartDate)] ?? p.weekTarget;
+export function weekTargetFor(p: Pick<Project, 'weekPlans' | 'weekTarget'> & { startDate?: string }, date: string): Counts {
+  return p.weekPlans?.[projectWeekStart({ startDate: p.startDate ?? '' }, date)] ?? p.weekPlans?.[weekStartOf(date)] ?? p.weekTarget;
 }
 /** True when that day's numbers are finalised for the project (default today). */
 export function isFinalized(p: Pick<Project, 'finalized'>, date: string = day(0)): boolean {
@@ -258,21 +258,25 @@ export function finalizedDays(p: Pick<Project, 'finalized'>, weekStartDate: stri
 
 export interface ProjectWeek { n: number; start: string; end: string; label: string; plannedAhead: boolean }
 /**
- * Weeks numbered from the project start: "Week 1 · 12 Oct to 16 Oct" (Monday to Friday).
- * Runs to the project end, and always at least `ahead` weeks past the current week so the PM can pre-plan.
+ * The project split into 7-day weeks counted from its start date: "Week 1 · 14 Oct to 20 Oct".
+ * Runs to the end date (the last week is cut at the end date). Without an end date it runs `ahead` weeks past today.
  */
 export function projectWeeks(p: { startDate: string; endDate?: string }, ahead = 4): ProjectWeek[] {
   if (!p.startDate) return [];
-  const first = weekStartOf(p.startDate);
-  const endWeek = p.endDate && p.endDate >= p.startDate ? weekStartOf(p.endDate) : first;
-  const minLast = weekStart(ahead);
-  const last = endWeek > minLast ? endWeek : minLast;
-  const cur = weekStart(0);
+  const today = day(0);
+  const last = p.endDate && p.endDate >= p.startDate ? p.endDate : addDays(today > p.startDate ? today : p.startDate, ahead * 7);
   const out: ProjectWeek[] = [];
-  for (let ws = first, n = 1; ws <= last && n <= 104; ws = addDays(ws, 7), n++) {
-    out.push({ n, start: ws, end: addDays(ws, 4), label: `Week ${n} · ${fmtDay(n === 1 && p.startDate > ws ? p.startDate : ws)} to ${fmtDay(addDays(ws, 4))}`, plannedAhead: ws > cur });
+  for (let ws = p.startDate, n = 1; ws <= last && n <= 104; ws = addDays(ws, 7), n++) {
+    const end = addDays(ws, 6) > last ? last : addDays(ws, 6);
+    out.push({ n, start: ws, end, label: `Week ${n} · ${fmtDay(ws)} to ${fmtDay(end)}`, plannedAhead: ws > today });
   }
   return out;
+}
+/** Start of the project week holding `date` (dates outside the project fall back to their Monday). */
+export function projectWeekStart(p: { startDate: string }, date: string): string {
+  if (!p.startDate || date < p.startDate) return weekStartOf(date);
+  const days = Math.round((parseDay(date).getTime() - parseDay(p.startDate).getTime()) / 86400000);
+  return addDays(p.startDate, Math.floor(days / 7) * 7);
 }
 
 const ALL = METRICS;
@@ -402,6 +406,10 @@ export interface Task {
   /** Most recent time it was sent for approval. */
   submittedAt?: string;
   approvedAt?: string;
+  /** Links shared with the reviewer (sheets, docs). */
+  links?: string[];
+  /** Sent for approval directly, without being assigned first. */
+  adhoc?: boolean;
   /** Sample history from before the demo: shown in calendars and logs, not re-counted in live project numbers. */
   historic?: boolean;
 }

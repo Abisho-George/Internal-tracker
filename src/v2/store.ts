@@ -2,7 +2,7 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import {
   addDays, canManage, day, findCustomStandard, isLeadRole, isWorkingDay, nextWorkingDay, pastWorkingDays, PEOPLE, previousWorkingDay, rollPeriods, seedProjects, seedTasks, standardFor, targetFor,
-  taskTitle, TASK_TYPES, toMinutes, weekStart, weekStartOf, WORK, ZERO, METRICS,
+  taskTitle, TASK_TYPES, toMinutes, weekStart, weekStartOf, projectWeekStart, WORK, ZERO, METRICS,
   type Counts, type CustomStandard, type Metric, type Project, type Task, type TaskEvent,
 } from './data';
 import { daySnapshot, weekSnapshot } from './analytics';
@@ -133,7 +133,9 @@ interface Actions {
   startTask: (id: string) => void;
   undoStart: (id: string) => void;
   /** Records 'submitted', or 'resubmitted' (and resubmits + 1) when it had feedback before. */
-  submitForReview: (id: string, doneQty: number, minutes: number, reviewerId: string) => void;
+  submitForReview: (id: string, doneQty: number, minutes: number, reviewerId: string, links?: string[]) => void;
+  /** Send work that was never assigned straight for approval. */
+  requestApproval: (a: { projectId: string; title: string; links: string[]; reviewerId: string; minutes?: number; note?: string }) => void;
   approve: (id: string) => void;
   sendBack: (id: string, text: string) => void;
   assign: (a: AssignInput) => void;
@@ -536,6 +538,10 @@ export const useStore = create<Data & Actions>()(
       };
       const leads = () => PEOPLE.filter((x) => isLeadRole(x.role)).map((x) => x.id);
       /** Builds a new task from an assign request (validates, works out the standard time, records 'assigned'). */
+      const cleanLinks = (xs: string[]) => xs.map((x) => x.trim()).filter(Boolean).map((x) => {
+        const u = /^https?:\/\//i.test(x) ? x : `https://${x}`;
+        try { return new URL(u).href; } catch { throw new Error(`"${x}" does not look like a link.`); }
+      });
       const makeTask = (a: AssignInput, priority: boolean): Task => {
         const me = get().me;
         if (!a.assigneeId) throw new Error('Pick who the task is for.');
@@ -586,7 +592,23 @@ export const useStore = create<Data & Actions>()(
         setMe: (id) => set({ me: id }),
         startTask: (id) => patch(id, { status: 'in_progress' }),
         undoStart: (id) => patch(id, { status: 'todo' }),
-        submitForReview: (id, doneQty, minutes, reviewerId) => {
+        requestApproval: (a) => {
+          const me = get().me;
+          if (!a.projectId) throw new Error('Pick a project.');
+          if (!a.title.trim()) throw new Error('Type what the task was.');
+          if (!a.reviewerId) throw new Error('Choose who should approve it.');
+          const links = cleanLinks(a.links);
+          const at = iso();
+          const t: Task = {
+            id: uid(), typeId: 'custom', customName: a.title.trim(), unit: 'task', qty: 1, doneQty: 1, targetMinutes: a.minutes || 30, minutes: a.minutes || 30, standardMinutes: a.minutes || 30,
+            projectId: a.projectId, assigneeId: me, assignedById: me, reviewerId: a.reviewerId, priority: false, status: 'in_review', adhoc: true, links,
+            feedback: a.note?.trim() ? [{ by: me, text: a.note.trim(), at }] : [], createdAt: at, date: day(0), reminders: 0, reviews: [], title: a.title.trim(),
+            history: [{ at, by: me, action: 'submitted', to: a.reviewerId, note: a.note?.trim() || undefined }], resubmits: 0, submittedAt: at,
+          };
+          set((s) => ({ tasks: [t, ...s.tasks] }));
+          notify(a.reviewerId, `${first(me)} sent ${t.title} to you for approval${links.length ? ` with ${links.length} link${links.length > 1 ? 's' : ''}` : ''}`);
+        },
+        submitForReview: (id, doneQty, minutes, reviewerId, linksIn) => {
           const t = task(id);
           if (!(doneQty > 0)) throw new Error('Enter how many you completed.');
           if (!(minutes > 0)) throw new Error('Enter the minutes you took.');
@@ -595,7 +617,7 @@ export const useStore = create<Data & Actions>()(
           const resubmits = (t.resubmits ?? 0) + (again ? 1 : 0);
           const at = iso();
           patch(id, {
-            status: 'in_review', doneQty, minutes, reviewerId, submittedAt: at, resubmits,
+            status: 'in_review', doneQty, minutes, reviewerId, submittedAt: at, resubmits, links: linksIn ? cleanLinks(linksIn) : t.links,
             history: [...(t.history ?? []), { at, by: get().me, action: again ? 'resubmitted' : 'submitted', to: reviewerId }],
           });
           notify(reviewerId, again ? `${first(t.assigneeId)} resubmitted ${t.title} for review (resubmit ${resubmits})` : `${first(t.assigneeId)} sent ${t.title} to you for review`);
@@ -814,7 +836,7 @@ export const useStore = create<Data & Actions>()(
           const teamIds = Object.keys(hours).filter((k) => hours[k] > 0);
           if (!teamIds.includes(me)) teamIds.push(me);
           const admins = [...new Set((p.admins ?? []).filter((a) => a !== me && PEOPLE.some((x) => x.id === a)))];
-          const weekPlans = Object.fromEntries(Object.entries(p.weekPlans ?? {}).map(([ws, c]) => [weekStartOf(ws), cleanCounts(c)]));
+          const weekPlans = Object.fromEntries(Object.entries(p.weekPlans ?? {}).map(([ws, c]) => [ws, cleanCounts(c)]));
           const lead = isLeadRole(roleOf(me));
           const id = uid();
           set((s) => ({
@@ -901,21 +923,18 @@ export const useStore = create<Data & Actions>()(
           leads().filter((id) => id !== me && id !== toId).forEach((id) => notify(id, `${first(prevOwner)} handed ${p.name} over to ${first(toId)}`, 'project'));
         },
         setWeekPlan: (pid, ws, metric, value) => {
-          owns(pid);
-          const mon = weekStartOf(ws);
+          const mon = projectWeekStart(owns(pid), ws);
           const v = Number(value);
           if (!Number.isFinite(v) || v < 0) throw new Error('Targets must be zero or more.');
           proj(pid, (x) => ({ ...x, weekPlans: { ...x.weekPlans, [mon]: { ...(x.weekPlans?.[mon] ?? x.weekTarget), [metric]: Math.round(v) } } }));
         },
         saveWeekPlan: (pid, ws, counts) => {
-          owns(pid);
-          const mon = weekStartOf(ws);
+          const mon = projectWeekStart(owns(pid), ws);
           const clean = cleanCounts(counts);
           proj(pid, (x) => ({ ...x, weekPlans: { ...x.weekPlans, [mon]: clean } }));
         },
         clearWeekPlan: (pid, ws) => {
-          owns(pid);
-          const mon = weekStartOf(ws);
+          const mon = projectWeekStart(owns(pid), ws);
           proj(pid, (x) => {
             const weekPlans = { ...x.weekPlans };
             delete weekPlans[mon];

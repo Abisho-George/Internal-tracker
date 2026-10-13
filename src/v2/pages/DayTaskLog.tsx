@@ -10,6 +10,9 @@ import { DurationInput, hhmm } from './DailyViews';
 const field = 'focus-ring w-full rounded-lg border border-line bg-surface px-2 py-1 text-sm text-ink';
 const CUSTOM = '__custom';
 let eid = 0;
+const EDIT_EVENT = 'ls-edit-day-tasks';
+/** Opens the daily update for editing and scrolls to it. */
+export const editDayTasks = () => window.dispatchEvent(new Event(EDIT_EVENT));
 const blockMin = (b: DayBlock) => Math.max(0, toMinutes(b.end) - toMinutes(b.start));
 const blank = (projectId: string): TaskEntry => ({ id: `e${Date.now().toString(36)}${eid++}`, projectId, task: '', desc: '', estMin: 0, achieved: '', remarks: '' });
 const taskName = (e: TaskEntry, opts: { id: string; name: string }[]) => (e.task === CUSTOM ? e.custom || 'Custom task' : opts.find((o) => o.id === e.task)?.name ?? e.task);
@@ -25,6 +28,14 @@ export default function DayTaskLog({ personId, date, plan, readOnly }: { personI
   const [rows, setRows] = useState<TaskEntry[]>(saved.entries ?? []);
   const [editing, setEditing] = useState(false);
   useEffect(() => { setRows(saved.entries ?? []); setEditing(false); }, [personId, date]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Changes made from Today's targets or End of day land here straight away.
+  useEffect(() => { if (!editing) setRows(saved.entries ?? []); }, [saved.entries]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (readOnly) return;
+    const open = () => { setEditing(true); document.getElementById('daily-update')?.scrollIntoView({ behavior: 'smooth', block: 'start' }); };
+    window.addEventListener(EDIT_EVENT, open);
+    return () => window.removeEventListener(EDIT_EVENT, open);
+  }, [readOnly]);
   const locked = !!saved.entriesAt && !editing;
 
   // Projects in the order they appear in the plan, with planned minutes. Projects that already have rows stay listed.
@@ -44,7 +55,8 @@ export default function DayTaskLog({ personId, date, plan, readOnly }: { personI
   const save = (lock: boolean) => safe(() => {
     const keep = clean();
     if (lock && !keep.length) throw new Error('Add at least one task before locking.');
-    saveDaily(personId, date, { entries: keep, ...(lock ? { entriesAt: new Date().toISOString() } : {}) });
+    const at = new Date().toISOString();
+    saveDaily(personId, date, { entries: keep, ...(lock ? { entriesAt: at, ...(saved.sodAt ? {} : { sodAt: at }) } : {}) });
     setRows(keep);
     setEditing(false);
     toast({ title: lock ? 'Daily update locked 🔒' : 'End of day recorded ✓', tone: 'success' });
@@ -53,8 +65,8 @@ export default function DayTaskLog({ personId, date, plan, readOnly }: { personI
   const plannedAll = groups.reduce((a, g) => a + g.planned, 0);
 
   return (
-    <Card className="!p-0">
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line px-4 py-3">
+    <Card className="!p-0 scroll-mt-20">
+      <div id={readOnly ? undefined : 'daily-update'} className="flex scroll-mt-20 flex-wrap items-center justify-between gap-3 border-b border-line px-4 py-3">
         <div>
           <h2 className="text-base font-bold">Daily update</h2>
           <p className="text-xs text-muted">{readOnly ? 'Tasks per project for the day.' : 'One table for every project in your plan. Add the tasks, lock it, then fill in actual time, achieved and remarks at the end of the day.'}</p>
@@ -146,5 +158,56 @@ export default function DayTaskLog({ personId, date, plan, readOnly }: { personI
         </div>
       )}
     </Card>
+  );
+}
+
+/**
+ * The daily update's task rows as they appear in Today's targets (task and estimate) and End of day
+ * (actual, achieved and remarks, editable right here and saved straight into the daily update).
+ */
+export function EntriesSummary({ personId, date, mode, editable }: { personId: string; date: string; mode: 'targets' | 'eod'; editable?: boolean }) {
+  const { projects, daily, saveDaily } = useStore();
+  const saved = daily[`${personId}|${date}`] ?? emptyDaily();
+  const list = saved.entries ?? [];
+  const set = (id: string, p: Partial<TaskEntry>) => safe(() => saveDaily(personId, date, { entries: list.map((e) => (e.id === id ? { ...e, ...p } : e)) }));
+  const est = list.reduce((a, e) => a + e.estMin, 0);
+  const act = list.reduce((a, e) => a + (e.actualMin ?? 0), 0);
+  return (
+    <div className="rounded-xl border border-line" data-entries={mode}>
+      <div className="flex items-center justify-between gap-2 border-b border-line bg-surface-2/60 px-3 py-1.5">
+        <p className="text-xs font-semibold">From your daily update</p>
+        {editable && <button type="button" className="focus-ring flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-semibold text-accent-ink hover:bg-surface" onClick={editDayTasks}><Pencil size={11} /> Edit tasks</button>}
+      </div>
+      {list.length === 0 ? <p className="px-3 py-2 text-xs text-muted">No tasks in the daily update yet.</p> : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-xs">
+            <thead><tr className="text-left text-[10px] uppercase tracking-wide text-muted">
+              <th className="px-2 py-1">Task</th><th className="px-2 py-1">Est.</th>
+              {mode === 'eod' && <><th className="px-2 py-1">Actual</th><th className="px-2 py-1">Achieved</th><th className="px-2 py-1">Remarks</th></>}
+            </tr></thead>
+            <tbody>
+              {list.map((e) => {
+                const p = projects.find((x) => x.id === e.projectId);
+                const opts = [...TASK_TYPES.map((t) => ({ id: t.id, name: t.name })), ...(p?.customStandards ?? []).map((c) => ({ id: `std:${c.id}`, name: c.name }))];
+                return (
+                  <tr key={e.id} className="border-t border-line align-top">
+                    <td className="px-2 py-1" style={{ borderLeft: `3px solid ${colorOf(projects, e.projectId)}` }}><b>{taskName(e, opts)}</b><span className="block text-muted">{p?.name}{e.desc ? ` · ${e.desc}` : ''}</span></td>
+                    <td className="px-2 py-1 tabular-nums">{fmtMin(e.estMin)}</td>
+                    {mode === 'eod' && (editable ? <>
+                      <td className="px-1 py-1"><DurationInput label="Actual time" className="w-20" placeholder="..." value={e.actualMin} onChange={(m) => set(e.id, { actualMin: m ?? undefined })} /></td>
+                      <td className="px-1 py-1"><input aria-label="Targets achieved" className={field} defaultValue={e.achieved} onBlur={(x) => x.target.value !== e.achieved && set(e.id, { achieved: x.target.value })} /></td>
+                      <td className="px-1 py-1"><input aria-label="Remarks" className={field} defaultValue={e.remarks} onBlur={(x) => x.target.value !== e.remarks && set(e.id, { remarks: x.target.value })} /></td>
+                    </> : <>
+                      <td className="px-2 py-1 tabular-nums">{e.actualMin != null ? fmtMin(e.actualMin) : '·'}</td><td className="px-2 py-1">{e.achieved || '·'}</td><td className="px-2 py-1">{e.remarks || '·'}</td>
+                    </>)}
+                  </tr>
+                );
+              })}
+            </tbody>
+            <tfoot><tr className="border-t border-line font-semibold"><td className="px-2 py-1">Total</td><td className="px-2 py-1 tabular-nums">{fmtMin(est)}</td>{mode === 'eod' && <><td className="px-2 py-1 tabular-nums">{fmtMin(act)}</td><td colSpan={2} /></>}</tr></tfoot>
+          </table>
+        </div>
+      )}
+    </div>
   );
 }

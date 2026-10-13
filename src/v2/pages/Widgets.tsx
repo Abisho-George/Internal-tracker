@@ -9,7 +9,7 @@ import { useLook } from '../theme';
 import { ResubmitChip, TaskHistory } from './TaskCard';
 // Project progress section (TargetsTable / MetricTile)
 import { LayoutGrid, Rows3 } from 'lucide-react';
-import { canManage, fmtDay, projectWeeks, weekTargetFor, workingDaysBetween } from '../data';
+import { canManage, projectWeekStart, fmtDay, projectWeeks, weekTargetFor, workingDaysBetween } from '../data';
 
 const DAY_START = 10 * 60;
 const DAY_END = 19 * 60;
@@ -196,7 +196,7 @@ export interface WeekOption { start: string; n: number; label: string; when: 'pa
  * 'progress' leaves out past weeks that have nothing recorded.
  */
 export function weekOptions(p: Project, mode: 'plan' | 'progress' = 'plan'): WeekOption[] {
-  const cur = weekStart(0);
+  const cur = projectWeekStart(p, day(0));
   return projectWeeks(p)
     .filter((w) => mode === 'plan' || w.start >= cur || p.pastWeeks.some((x) => x.start === w.start) || !!p.weekPlans?.[w.start])
     .map((w) => {
@@ -307,7 +307,7 @@ export function TargetsTable({ p, compact }: { p: Project; compact?: boolean }) 
   const [mo, setMo] = useState(thisMonth);
   const [only, setOnly] = useState('all');
   const [view, setView] = useState<'bars' | 'tiles'>('bars');
-  const weekKey = weeks.some((w) => w.start === wk) ? wk : (weeks.find((w) => w.when === 'current') ?? weeks[0])?.start ?? thisWeek;
+  const weekKey = weeks.some((w) => w.start === projectWeekStart(p, wk)) ? projectWeekStart(p, wk) : weeks.some((w) => w.start === wk) ? wk : (weeks.find((w) => w.when === 'current') ?? weeks[0])?.start ?? thisWeek;
   const monthKey = months.some((m) => m.key === mo) ? mo : thisMonth;
   const key = kind === 'week' ? weekKey : monthKey;
   const { counts, auto } = useMemo(() => projectCounts(p, tasks, daily, { kind, key }), [p, tasks, daily, kind, key]);

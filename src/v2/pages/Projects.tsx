@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { CalendarPlus, Check, ChevronLeft, ChevronRight, Copy, Crown, Lock, Pencil, Plus, Settings2, ShieldCheck, X } from 'lucide-react';
 import { toast } from '@/components';
-import { canManage, day, DEFAULT_STANDARDS, finalizedDays, inPeriod, isLeadRole, roleOfPerson, weekStart, weekTargetFor, type Counts, type Project } from '../data';
+import { canManage, day, DEFAULT_STANDARDS, finalizedDays, inPeriod, projectWeekStart, isLeadRole, roleOfPerson, weekStart, weekTargetFor, type Counts, type Project } from '../data';
 import { projectEodStatus } from '../analytics';
 import { first, nameOf, projectCounts, useStore } from '../store';
 import { Avatar, Btn, Card, Chip, PROJECT_COLORS, cx, input, safe } from '../ui';
@@ -51,11 +51,13 @@ function TargetEditor({ p, period }: { p: Project; period: 'week' | 'month' }) {
 }
 
 /** Pre-plan weekly targets week by week (past and future). A saved week is locked until someone presses Edit. */
-function WeekPlanner({ p }: { p: Project }) {
+export function WeekPlanner({ p, date }: { p: Project; date?: string }) {
   const { saveWeekPlan, clearWeekPlan } = useStore();
   const weeks = useMemo(() => weekOptions(p, 'plan'), [p]);
-  const cur = weekStart(0);
-  const [ws, setWs] = useState(() => (weeks.some((w) => w.start === cur) ? cur : weeks[0]?.start ?? cur));
+  const cur = projectWeekStart(p, day(0));
+  const want = projectWeekStart(p, date ?? day(0));
+  const [ws, setWs] = useState(() => (weeks.some((w) => w.start === want) ? want : weeks[0]?.start ?? want));
+  useEffect(() => { if (weeks.some((w) => w.start === want)) setWs(want); }, [want]); // eslint-disable-line react-hooks/exhaustive-deps
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState<Record<string, string>>({});
   const idx = Math.max(0, weeks.findIndex((w) => w.start === ws));
@@ -459,7 +461,7 @@ export function ProjectCard({ p, color }: { p: Project; color: string }) {
           </div>
         )}
         {active === 'targets' && manage && <>
-          <WeekPlanner p={p} />
+          <p className="rounded-xl bg-surface-2 px-3 py-2 text-sm text-muted">Week by week targets are planned in <b className="text-ink">Tasks update</b>, under Weekly targets. They show up here and in Progress straight away.</p>
           <div className="grid gap-4 lg:grid-cols-2"><TargetEditor p={p} period="week" /><TargetEditor p={p} period="month" /></div>
           <MetricManager p={p} />
         </>}

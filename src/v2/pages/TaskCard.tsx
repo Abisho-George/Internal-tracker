@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { BellRing, Check, CheckCheck, ChevronDown, Forward, Gauge, History, MessageSquare, Pencil, Repeat, Send, Star, UserPlus } from 'lucide-react';
+import { BellRing, ExternalLink, Link2, Plus, X, Check, CheckCheck, ChevronDown, Forward, Gauge, History, MessageSquare, Pencil, Repeat, Send, Star, UserPlus } from 'lucide-react';
 import { Modal, toast } from '@/components';
 import { day, fmtDay, MONTHS, PEOPLE, TASK_TYPES, type Task, type TaskAction, type TaskEvent } from '../data';
 import { difficulty, DIFFICULTY_LABEL, type Difficulty } from '../analytics';
@@ -204,6 +204,86 @@ function useReviewerOptions(projectId: string) {
   }));
 }
 
+/** One or more pasted links (sheets, docs). */
+export function LinksInput({ value, onChange }: { value: string[]; onChange: (v: string[]) => void }) {
+  const rows = value.length ? value : [''];
+  return (
+    <div className="space-y-1.5">
+      {rows.map((l, i) => (
+        <div key={i} className="flex items-center gap-1.5">
+          <Link2 size={14} className="shrink-0 text-muted" />
+          <input aria-label={`Link ${i + 1}`} className={input} placeholder="Paste the sheet or doc link" value={l} onChange={(e) => onChange(rows.map((x, j) => (j === i ? e.target.value : x)))} />
+          {rows.length > 1 && <button type="button" aria-label="Remove link" className="focus-ring rounded-lg p-1 text-muted hover:text-coral-ink" onClick={() => onChange(rows.filter((_, j) => j !== i))}><X size={14} /></button>}
+        </div>
+      ))}
+      <button type="button" className="focus-ring flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-semibold text-accent-ink hover:bg-surface-2" onClick={() => onChange([...rows, ''])}><Plus size={12} /> Add another link</button>
+    </div>
+  );
+}
+
+/** Clickable links shared with a task. */
+export function LinkList({ links, className }: { links?: string[]; className?: string }) {
+  if (!links?.length) return null;
+  return (
+    <p className={cx('flex flex-wrap gap-1.5', className)}>
+      {links.map((l, i) => (
+        <a key={i} href={l} target="_blank" rel="noreferrer" data-link className="focus-ring inline-flex max-w-[16rem] items-center gap-1 rounded-full bg-sky px-2.5 py-0.5 text-xs font-semibold text-sky-ink hover:underline">
+          <ExternalLink size={11} className="shrink-0" /><span className="truncate">{l.replace(/^https?:\/\/(www\.)?/, '')}</span>
+        </a>
+      ))}
+    </p>
+  );
+}
+
+/** Send work that was never assigned (or anything extra) straight to someone for approval. */
+export function SendForApproval() {
+  const { me, projects, requestApproval } = useStore();
+  const mine = projects.filter((p) => p.status === 'active' && (p.pmId === me || p.teamIds.includes(me) || p.admins?.includes(me)));
+  const list = mine.length ? mine : projects.filter((p) => p.status === 'active');
+  const [open, setOpen] = useState(false);
+  const [pid, setPid] = useState(list[0]?.id ?? '');
+  const options = useReviewerOptions(pid);
+  const [reviewer, setReviewer] = useState('');
+  const [title, setTitle] = useState('');
+  const [links, setLinks] = useState<string[]>(['']);
+  const [note, setNote] = useState('');
+  const [err, setErr] = useState('');
+  const who = reviewer || options[0]?.id || '';
+  return (
+    <>
+      <Btn onClick={() => { setErr(''); setOpen(true); }}><Send size={13} /> Send for approval</Btn>
+      <Modal open={open} onClose={() => setOpen(false)} title="Send for approval" description="For work that was not assigned as a task" size="sm"
+        footer={<Btn onClick={() => {
+          if (safe(() => requestApproval({ projectId: pid, title, links, reviewerId: who, note }), setErr)) {
+            setOpen(false); setTitle(''); setLinks(['']); setNote('');
+            toast({ title: `Sent to ${first(who)} for approval`, tone: 'success' });
+          }
+        }}><Send size={14} /> Send to {first(who)}</Btn>}>
+        <div className="space-y-3">
+          <label className="block text-sm font-semibold">Project
+            <select className={cx(input, 'mt-1')} value={pid} onChange={(e) => { setPid(e.target.value); setReviewer(''); }}>
+              {list.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+            </select>
+          </label>
+          <label className="block text-sm font-semibold">Task
+            <input className={cx(input, 'mt-1')} placeholder="e.g. Pitch deck for Acme" value={title} onChange={(e) => setTitle(e.target.value)} />
+          </label>
+          <div className="text-sm font-semibold">Links <span className="font-normal text-muted">(optional)</span><div className="mt-1"><LinksInput value={links} onChange={setLinks} /></div></div>
+          <label className="block text-sm font-semibold">Who should approve it?
+            <select className={cx(input, 'mt-1')} value={who} onChange={(e) => setReviewer(e.target.value)}>
+              {options.map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
+            </select>
+          </label>
+          <label className="block text-sm font-semibold">Note <span className="font-normal text-muted">(optional)</span>
+            <input className={cx(input, 'mt-1')} placeholder="Anything they should know" value={note} onChange={(e) => setNote(e.target.value)} />
+          </label>
+          {err && <p role="alert" className="text-sm font-semibold text-coral-ink">{err}</p>}
+        </div>
+      </Modal>
+    </>
+  );
+}
+
 /** Compact row for a task the viewer owns. */
 export function TaskRow({ task }: { task: Task }) {
   const { submitForReview } = useStore();
@@ -213,6 +293,7 @@ export function TaskRow({ task }: { task: Task }) {
   const [qty, setQty] = useState(task.doneQty ?? task.qty);
   const [mins, setMins] = useState(task.minutes ?? task.targetMinutes);
   const [reviewer, setReviewer] = useState(task.reviewerId ?? options[0]?.id ?? '');
+  const [links, setLinks] = useState<string[]>(task.links?.length ? task.links : ['']);
   const [err, setErr] = useState('');
   const type = TASK_TYPES.find((t) => t.id === task.typeId);
   const st = STATUS[task.status];
@@ -236,6 +317,7 @@ export function TaskRow({ task }: { task: Task }) {
           <p className="text-xs text-muted">
             Target {fmtMin(task.targetMinutes)}{std != null && std !== task.targetMinutes ? ` (standard ${fmtMin(std)})` : ''}{type ? ` · ideal ${type.ideal}` : ' · custom task'}
           </p>
+          <LinkList links={task.links} className="mt-1" />
           <HistoryToggle task={task} open={showHistory} onClick={() => setShowHistory((v) => !v)} className="mt-0.5" />
         </div>
         <PaceChip task={task} />
@@ -257,7 +339,7 @@ export function TaskRow({ task }: { task: Task }) {
         size="sm"
         footer={
           <Btn onClick={() => {
-            if (safe(() => submitForReview(task.id, qty, mins, reviewer), setErr)) {
+            if (safe(() => submitForReview(task.id, qty, mins, reviewer, links), setErr)) {
               setOpen(false);
               toast({ title: `${resubmitting ? 'Resubmitted' : 'Sent'} to ${first(reviewer)} for approval`, tone: 'success' });
             }
@@ -288,6 +370,7 @@ export function TaskRow({ task }: { task: Task }) {
           ))}
         </div>
         <p className="mt-3 text-sm text-muted">Target: {fmtMin(task.targetMinutes)} for {task.qty} {task.unit}</p>
+        <div className="mt-4 text-sm font-semibold">Links <span className="font-normal text-muted">(optional: the sheet or doc to check)</span><div className="mt-1"><LinksInput value={links} onChange={setLinks} /></div></div>
         {resubmitting && <p className="mt-1 text-xs text-muted">This will be resubmit {(task.resubmits ?? 0) + 1}. The time you send it is recorded in the task history.</p>}
         {err && <p role="alert" className="mt-2 text-sm font-semibold text-coral-ink">{err}</p>}
       </Modal>
@@ -317,7 +400,9 @@ export function ReviewRow({ task, projectName }: { task: Task; projectName: stri
             <ResubmitChip task={task} />
             {forwarded && <Chip tone="sky"><Forward size={11} /> Forwarded by {first(forwarded.by)}</Chip>}
           </p>
-          <p className="text-xs text-muted">{first(task.assigneeId)} · {projectName} · {task.doneQty} {task.unit} in {fmtMin(task.minutes ?? 0)} (target {fmtMin(task.targetMinutes)})</p>
+          <p className="text-xs text-muted">{task.adhoc ? `${first(task.assigneeId)} · ${projectName} · sent for approval without an assigned task` : `${first(task.assigneeId)} · ${projectName} · ${task.doneQty} ${task.unit} in ${fmtMin(task.minutes ?? 0)} (target ${fmtMin(task.targetMinutes)})`}</p>
+          {task.adhoc && task.feedback[0] && <p className="text-xs">Note: {task.feedback[0].text}</p>}
+          <LinkList links={task.links} className="mt-1" />
           <p className="text-xs text-muted">
             Sent for approval {fmtStamp(task.submittedAt)}
             {(task.resubmits ?? 0) > 0 && firstSent && firstSent.at !== task.submittedAt ? ` · first sent ${shortStamp(firstSent.at)}` : ''}
