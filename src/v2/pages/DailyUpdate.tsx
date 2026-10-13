@@ -115,7 +115,7 @@ export default function DailyUpdate() {
             <h2 className="text-base font-bold">Plan your day</h2>
             <HoursStats t={time} sent={sent} />
           </div>
-          <DayTracker blocks={plan} loggedMinutes={doneToday.reduce((s, t) => s + (t.minutes ?? 0), 0)} />
+          <DayTracker blocks={plan} extra={extra} loggedMinutes={doneToday.reduce((s, t) => s + (t.minutes ?? 0), 0)} />
 
           <div className="mt-5 space-y-2">
             {plan.length === 0 && <p className="text-sm text-muted">Split your day into time blocks. Pick a project for each, or "★ Custom / priority" for anything urgent.</p>}
@@ -207,7 +207,7 @@ export default function DailyUpdate() {
         </Card>
       </section>
 
-      <DayTaskLog personId={me} date={date} plan={plan} />
+      <DayTaskLog personId={me} date={date} plan={plan} extra={extra} />
       <DayTaskLog personId={me} date={date} kind="week" />
 
       <div className="border-t-2 border-dashed border-line pt-5">
@@ -248,6 +248,7 @@ export default function DailyUpdate() {
             <NoteView label="How it went" text={saved.eodNote} />
           </>}>
           <TargetsProgress personId={me} date={date} kind="day" />
+          <TimeBreakdown plan={plan} extra={cleanExtra(extra)} sent={false} />
           <TaskLine tasks={doneToday} mode="submitted" />
           <ReportTable rows={savedRows.rows} showActual label="End of day" empty="No tasks or targets for this day." />
           {!sent && savedRows.rows.length > 0 && <PendingHint>Fills in when you send your end of day</PendingHint>}

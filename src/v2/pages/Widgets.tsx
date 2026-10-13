@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { ChevronLeft, ChevronRight, Crown, Sparkles, Trophy } from 'lucide-react';
 import { Modal } from '@/components';
 import { day, inPeriod, PEOPLE, weekStart, type Project, type Task } from '../data';
-import { first, nameOf, onTimeRate, projectCounts, useStore, type DayBlock } from '../store';
+import { first, nameOf, onTimeRate, projectCounts, useStore, type DayBlock, type ExtraHours } from '../store';
 import { personSeries, teamTable } from '../analytics';
 import { Avatar, Bar, Chip, PROJECT_COLORS, STATUS, cx, fmtMin } from '../ui';
 import { useLook } from '../theme';
@@ -18,7 +18,7 @@ const clock = (m: number) => `${m / 60 > 12 ? Math.floor(m / 60) - 12 : Math.flo
 export const colorOf = (projects: Project[], id: string) => PROJECT_COLORS[Math.max(0, projects.findIndex((p) => p.id === id)) % PROJECT_COLORS.length];
 
 /** Working day 10am → 7pm: the planned blocks, a live "now" marker and time logged. */
-export function DayTracker({ blocks, loggedMinutes }: { blocks: DayBlock[]; loggedMinutes: number }) {
+export function DayTracker({ blocks, loggedMinutes, extra = [] }: { blocks: DayBlock[]; loggedMinutes: number; extra?: ExtraHours[] }) {
   const projects = useStore((s) => s.projects);
   const look = useLook();
   const deco = (color: string) => look.blocks === 'striped' ? { backgroundImage: 'repeating-linear-gradient(45deg, rgb(255 255 255 / 0.18) 0 7px, transparent 7px 14px)' } : look.blocks === 'candy' ? { backgroundImage: `linear-gradient(180deg, rgb(255 255 255 / 0.35), transparent 60%)`, boxShadow: `inset 0 -3px 0 ${color}` } : {};
@@ -47,7 +47,17 @@ export function DayTracker({ blocks, loggedMinutes }: { blocks: DayBlock[]; logg
             </div>
           );
         })}
-        {!blocks.length && <p className="absolute inset-y-0 left-0 flex w-1/3 items-center justify-center text-xs text-muted">No day plan yet</p>}
+        {extra.filter((x) => x.start && x.end && x.end > x.start).map((x) => {
+          const a = Math.max(DAY_START, toMin(x.start!));
+          const z = Math.min(DAY_END, toMin(x.end!));
+          if (z <= a) return null;
+          return (
+            <div key={x.id} data-extra-block className="absolute inset-y-0 flex items-center justify-center truncate border-r-2 border-surface bg-lavender-strong px-2 text-[11px] font-semibold text-white" style={{ left: `${((a - DAY_START) / span) * 100}%`, width: `${((z - a) / span) * 100}%`, backgroundImage: 'repeating-linear-gradient(45deg, rgb(255 255 255 / 0.18) 0 6px, transparent 6px 12px)' }} title={`Extra ${x.start} to ${x.end} · ${x.work}`}>
+              Extra · {x.work || 'extra hours'}
+            </div>
+          );
+        })}
+        {!blocks.length && !extra.length && <p className="absolute inset-y-0 left-0 flex w-1/3 items-center justify-center text-xs text-muted">No day plan yet</p>}
       </div>
       <div className="relative -mt-12 h-12">
         <div className="absolute top-0 h-12 w-0.5 -translate-x-1/2 bg-coral-strong" style={{ left: `${pct}%` }}>

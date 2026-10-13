@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { CalendarRange, ClipboardList, Copy, Lock, Pencil, Plus, Save, Trash2 } from 'lucide-react';
 import { toast } from '@/components';
 import { addDays, canManage, previousWorkingDay, TASK_TYPES, toMinutes, weekStartOf, type Project } from '../data';
-import { emptyDaily, emptyWeekly, useStore, type DayBlock, type TaskEntry } from '../store';
+import { emptyDaily, emptyWeekly, useStore, type DayBlock, type ExtraHours, type TaskEntry } from '../store';
 import { Bar, Btn, Card, Chip, cx, fmtMin, safe } from '../ui';
 import { colorOf } from './Widgets';
 import { DurationInput, hhmm } from './DailyViews';
@@ -46,11 +46,12 @@ export function weekDone(e: TaskEntry, personId: string, mon: string, daily: Ret
  * Daily or weekly update entry: a table per project (task, description, target, estimated, actual,
  * achieved, remarks) with totals. Daily tables come from the plan's blocks; weekly ones from the person's projects.
  */
-export default function DayTaskLog({ personId, date, plan, readOnly, kind = 'day' }: { personId: string; date: string; plan?: DayBlock[]; readOnly?: boolean; kind?: LogKind }) {
+export default function DayTaskLog({ personId, date, plan, extra, readOnly, kind = 'day' }: { personId: string; date: string; plan?: DayBlock[]; extra?: ExtraHours[]; readOnly?: boolean; kind?: LogKind }) {
   const { projects, daily } = useStore();
   const { key, rec, prev, save: persist, sodAt } = useLog(personId, kind, date);
   const saved = rec.entries ?? [];
   const blocks = plan ?? (kind === 'day' ? (rec as ReturnType<typeof emptyDaily>).plan : []);
+  const extras = extra ?? (kind === 'day' ? (rec as ReturnType<typeof emptyDaily>).extra ?? [] : []);
   const [rows, setRows] = useState<TaskEntry[]>(saved);
   const [editing, setEditing] = useState(false);
   useEffect(() => { setRows(saved); setEditing(false); }, [personId, key]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -74,13 +75,18 @@ export default function DayTaskLog({ personId, date, plan, readOnly, kind = 'day
         const pid = b.custom ? b.custom.projectId ?? b.projectId : b.projectId;
         if (pid) planned.set(pid, (planned.get(pid) ?? 0) + blockMin(b));
       });
+      // Extra hours count as time blocks for their project.
+      extras.forEach((x) => {
+        const m = x.start && x.end && x.end > x.start ? toMinutes(x.end) - toMinutes(x.start) : x.minutes;
+        if (x.projectId) planned.set(x.projectId, (planned.get(x.projectId) ?? 0) + (m || 0));
+      });
     } else {
       projects.filter((p) => p.status === 'active' && (p.pmId === personId || p.teamIds.includes(personId) || p.admins?.includes(personId)))
         .forEach((p) => planned.set(p.id, Math.round((p.hours[personId] ?? 0) * 60 * 5)));
     }
     list.forEach((e) => { if (!planned.has(e.projectId)) planned.set(e.projectId, 0); });
     return [...planned].map(([pid, min]) => ({ project: projects.find((p) => p.id === pid)!, pid, planned: min })).filter((g) => g.project);
-  }, [kind, blocks, list, projects, personId]);
+  }, [kind, blocks, extras, list, projects, personId]);
 
   const upd = (id: string, p: Partial<TaskEntry>) => setRows((r) => r.map((e) => (e.id === id ? { ...e, ...p } : e)));
   const fillFromPrev = (pid: string) => {
