@@ -471,8 +471,7 @@ export function ProjectCard({ p, color }: { p: Project; color: string }) {
         )}
         {active === 'targets' && manage && <>
           <WeekManager p={p} />
-          <div className="grid gap-4 lg:grid-cols-2"><TargetEditor p={p} period="week" /><TargetEditor p={p} period="month" /></div>
-          <MetricManager p={p} />
+          <div className="grid gap-4 lg:grid-cols-2"><TargetEditor p={p} period="month" /></div>
         </>}
         {active === 'numbers' && <WeekNumbersTab p={p} canEdit={manage} />}
         {active === 'meetings' && <Meetings p={p} canEdit={manage} />}
