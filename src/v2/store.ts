@@ -44,6 +44,8 @@ export interface WeeklyUpdate {
   /** Weekly task rows per project, same shape as the daily update; locked when entriesAt is set. */
   entries?: TaskEntry[];
   entriesAt?: string;
+  /** End of day / end of week sent from the task table: everything locks and shows this time. */
+  entriesDoneAt?: string;
 }
 export const emptyWeekly = (): WeeklyUpdate => ({ targetsNote: '', targetsCustom: [], eowNote: '', eowCustom: [] });
 
@@ -121,6 +123,8 @@ export interface DailyUpdate {
   /** Task rows for each project in the day plan; locked when entriesAt is set. */
   entries?: TaskEntry[];
   entriesAt?: string;
+  /** End of day / end of week sent from the task table: everything locks and shows this time. */
+  entriesDoneAt?: string;
 }
 /** One task row under a planned project: picked from the list (task type or project standard) or typed in. */
 export type EntryKind = 'number' | 'milestone' | 'text';
@@ -539,7 +543,8 @@ function seedEntries(projects: Project[], daily: Record<string, DailyUpdate>, we
         entries.forEach((e) => { e.doneQty = Math.round((e.qty ?? 0) * frac * (0.8 + rnd() * 0.3)); });
       }
       const lockedAt = new Date(`${d}T10:${String(5 + Math.floor(rnd() * 20)).padStart(2, '0')}:00`).toISOString();
-      daily[key] = { ...rec, entries, entriesAt: lockedAt <= nowIso ? lockedAt : undefined, sodAt: rec.sodAt ?? (lockedAt <= nowIso ? lockedAt : undefined) };
+      const doneAt = sent ? rec.eodAt ?? new Date(`${d}T18:${String(30 + Math.floor(rnd() * 25)).padStart(2, '0')}:00`).toISOString() : undefined;
+      daily[key] = { ...rec, entries, entriesAt: lockedAt <= nowIso ? lockedAt : undefined, entriesDoneAt: doneAt && doneAt <= nowIso ? doneAt : undefined, sodAt: rec.sodAt ?? (lockedAt <= nowIso ? lockedAt : undefined) };
     });
     // Weekly targets: this week and the two before, per project, roughly five days of work.
     [0, -1, -2].forEach((w) => {
@@ -560,7 +565,7 @@ function seedEntries(projects: Project[], daily: Record<string, DailyUpdate>, we
         ...e, qty: Math.round(((e.qty ?? 0) * scale) / 5) * 5, estMin: Math.round((e.estMin * scale) / 15) * 15,
         actualMin: w < 0 && e.actualMin ? e.actualMin : undefined, remarks: w < 0 ? REMARKS[Math.floor(rnd() * REMARKS.length)] : '',
       }));
-      weekly[key] = { ...rec, entries, entriesAt: new Date(`${mon}T10:30:00`).toISOString() <= nowIso ? new Date(`${mon}T10:30:00`).toISOString() : undefined };
+      weekly[key] = { ...rec, entries, entriesDoneAt: w < 0 ? new Date(`${addDays(mon, 4)}T18:15:00`).toISOString() : undefined, entriesAt: new Date(`${mon}T10:30:00`).toISOString() <= nowIso ? new Date(`${mon}T10:30:00`).toISOString() : undefined };
     });
   });
 }
@@ -1101,7 +1106,7 @@ export const useStore = create<Data & Actions>()(
     },
     {
       name: 'ls-tracker-v2',
-      version: 12,
+      version: 13,
       // Old or unreadable saved data falls back to a fresh demo instead of crashing.
       migrate: () => seed() as never,
       merge: (persisted, current) => {

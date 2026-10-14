@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useState } from 'react';
-import { CalendarRange, Check, CheckSquare, ChevronDown, FileText, Hash, ClipboardList, Copy, Lock, Pencil, Plus, Save, Trash2, X } from 'lucide-react';
+import { CalendarRange, Check, CheckSquare, ChevronDown, FileText, Hash, ClipboardList, Copy, Lock, Pencil, Plus, Save, Send, Trash2, X } from 'lucide-react';
 import { toast } from '@/components';
 import { addDays, canManage, previousWorkingDay, TASK_TYPES, toMinutes, weekStartOf, type Project } from '../data';
 import { emptyDaily, emptyWeekly, useStore, type DayBlock, type ExtraHours, type TaskEntry, type EntryKind, type MilestoneStatus, MILESTONE_STATUS } from '../store';
 import { Bar, Btn, Card, Chip, cx, fmtMin, safe } from '../ui';
 import { colorOf } from './Widgets';
-import { DurationInput, hhmm } from './DailyViews';
+import { dayHhmm, DurationInput, hhmm } from './DailyViews';
 import { WeekPlanner } from './Projects';
 
 export type LogKind = 'day' | 'week';
@@ -57,7 +57,7 @@ function useLog(personId: string, kind: LogKind, date: string) {
   const rec = kind === 'day' ? daily[`${personId}|${key}`] ?? emptyDaily() : weekly[`${personId}|${key}`] ?? emptyWeekly();
   const prevKey = kind === 'day' ? previousWorkingDay(date) : addDays(key, -7);
   const prev = (kind === 'day' ? daily[`${personId}|${prevKey}`] : weekly[`${personId}|${prevKey}`])?.entries ?? [];
-  const save = (patch: { entries: TaskEntry[]; entriesAt?: string; sodAt?: string }) => (kind === 'day' ? saveDaily(personId, key, patch) : saveWeekly(personId, key, patch));
+  const save = (patch: { entries: TaskEntry[]; entriesAt?: string; sodAt?: string; entriesDoneAt?: string }) => (kind === 'day' ? saveDaily(personId, key, patch) : saveWeekly(personId, key, patch));
   return { key, rec, prev, save, sodAt: kind === 'day' ? (rec as ReturnType<typeof emptyDaily>).sodAt : undefined };
 }
 
@@ -92,6 +92,8 @@ export default function DayTaskLog({ personId, date, plan, extra, readOnly, kind
     return () => window.removeEventListener(EDIT_EVENT, open);
   }, [readOnly, kind]);
   const locked = !!rec.entriesAt && !editing;
+  const submitted = !!rec.entriesDoneAt && !editing;
+  const ro = readOnly || submitted;
   const list = readOnly ? saved : rows;
   const edit = !readOnly && !locked;
   const what = kind === 'day' ? 'day' : 'week';
@@ -166,10 +168,12 @@ export default function DayTaskLog({ personId, date, plan, extra, readOnly, kind
     const keep = rows.filter((e) => e.task && (e.task !== CUSTOM || e.custom?.trim()));
     if (lock && !keep.length) throw new Error('Add at least one task before locking.');
     const at = new Date().toISOString();
-    persist({ entries: keep, ...(lock ? { entriesAt: at, ...(kind === 'day' && !sodAt ? { sodAt: at } : {}) } : {}) });
+    // Saving the end of day / week (or updating after it was sent) submits it: everything locks with the time.
+    const done = !lock || !!rec.entriesDoneAt;
+    persist({ entries: keep, ...(lock ? { entriesAt: at, ...(kind === 'day' && !sodAt ? { sodAt: at } : {}) } : {}), ...(done ? { entriesDoneAt: at } : {}) });
     setRows(keep);
     setEditing(false);
-    toast({ title: lock ? `${kind === 'day' ? 'Daily' : 'Weekly'} tasks locked 🔒` : 'Saved ✓', tone: 'success' });
+    toast({ title: done ? `${kind === 'day' ? 'End of day' : 'End of week'} submitted at ${hhmm(at)} 🔒` : `${kind === 'day' ? 'Daily' : 'Weekly'} tasks locked 🔒`, tone: 'success' });
   });
   const all = list.reduce((a, e) => ({ est: a.est + e.estMin, act: a.act + (e.actualMin ?? 0) }), { est: 0, act: 0 });
   const plannedAll = groups.reduce((a, g) => a + g.planned, 0);
@@ -185,7 +189,12 @@ export default function DayTaskLog({ personId, date, plan, extra, readOnly, kind
             : 'Set the week\'s tasks and targets for each project. Achieved adds up from your daily updates unless you type it.'}</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          {rec.entriesAt ? <Chip tone="mint">Locked {hhmm(rec.entriesAt)}</Chip> : <Chip tone="grey">Not locked yet</Chip>}
+          {rec.entriesAt
+            ? <span data-testid="targets-time"><Chip tone="mint"><Lock size={11} /> {kind === 'day' ? 'Targets' : 'Weekly targets'} {kind === 'day' ? hhmm(rec.entriesAt) : dayHhmm(rec.entriesAt)}</Chip></span>
+            : <Chip tone="grey">Targets not locked yet</Chip>}
+          {rec.entriesDoneAt
+            ? <span data-testid="done-time"><Chip tone="lavender"><Send size={11} /> {kind === 'day' ? 'End of day' : 'End of week'} {kind === 'day' ? hhmm(rec.entriesDoneAt) : dayHhmm(rec.entriesDoneAt)}</Chip></span>
+            : rec.entriesAt && <Chip tone="grey">{kind === 'day' ? 'End of day' : 'End of week'} not sent</Chip>}
           {!readOnly && locked && <Btn tone="ghost" className="border border-line" onClick={() => setEditing(true)}><Pencil size={13} /> Update tasks</Btn>}
         </div>
       </div>
@@ -264,18 +273,18 @@ export default function DayTaskLog({ personId, date, plan, extra, readOnly, kind
                           </td>
                           <td className="px-2 py-2">
                             {k === 'number'
-                              ? (readOnly ? <span className="tabular-nums">{d ?? '·'}</span> : <input aria-label="Actual" type="number" min={0} className={cx(field, 'tabular-nums')} placeholder={kind === 'week' && d != null ? String(d) : '0'} value={e.doneQty ?? ''} onChange={(x) => upd(e.id, { doneQty: n(x.target.value) })} />)
+                              ? (ro ? <span className="tabular-nums">{d ?? '·'}</span> : <input aria-label="Actual" type="number" min={0} className={cx(field, 'tabular-nums')} placeholder={kind === 'week' && d != null ? String(d) : '0'} value={e.doneQty ?? ''} onChange={(x) => upd(e.id, { doneQty: n(x.target.value) })} />)
                               : k === 'milestone'
-                                ? <select aria-label="Actual" disabled={readOnly} className={cx(field, 'font-medium', STATUS_TONE[e.status ?? 'Not started'])} value={e.status ?? 'Not started'} onChange={(x) => upd(e.id, { status: x.target.value as MilestoneStatus })}>
+                                ? <select aria-label="Actual" disabled={ro} className={cx(field, 'font-medium', STATUS_TONE[e.status ?? 'Not started'])} value={e.status ?? 'Not started'} onChange={(x) => upd(e.id, { status: x.target.value as MilestoneStatus })}>
                                     {MILESTONE_STATUS.map((st) => <option key={st} value={st}>{st}</option>)}
                                   </select>
-                                : (readOnly ? <span>{e.actualText || '·'}</span> : <input aria-label="Actual" className={field} placeholder="What got done" value={e.actualText ?? ''} onChange={(x) => upd(e.id, { actualText: x.target.value })} />)}
+                                : (ro ? <span>{e.actualText || '·'}</span> : <input aria-label="Actual" className={field} placeholder="What got done" value={e.actualText ?? ''} onChange={(x) => upd(e.id, { actualText: x.target.value })} />)}
                           </td>
                           <td className="px-2 py-2">{!edit ? <span className="tabular-nums">{fmtMin(e.estMin)}</span>
                             : <DurationInput label="Estimated time" placeholder="1h" value={e.estMin || undefined} onChange={(m) => upd(e.id, { estMin: m ?? 0 })} />}</td>
-                          <td className="px-2 py-2">{readOnly ? <span className="tabular-nums">{e.actualMin != null ? fmtMin(e.actualMin) : '·'}</span>
+                          <td className="px-2 py-2">{ro ? <span className="tabular-nums">{e.actualMin != null ? fmtMin(e.actualMin) : '·'}</span>
                             : <DurationInput label="Actual time" placeholder="..." value={e.actualMin} onChange={(m) => upd(e.id, { actualMin: m ?? undefined })} />}</td>
-                          <td className="px-2 py-2">{readOnly ? <span>{e.remarks || '·'}</span>
+                          <td className="px-2 py-2">{ro ? <span>{e.remarks || '·'}</span>
                             : <input aria-label="Notes" className={field} placeholder="Add note..." value={e.remarks} onChange={(x) => upd(e.id, { remarks: x.target.value })} />}</td>
                           {edit && <td className="py-2"><button aria-label="Remove task" className="focus-ring rounded-lg p-1.5 text-muted hover:bg-surface-2 hover:text-coral-ink" onClick={() => setRows((r) => r.filter((y) => y.id !== e.id))}><Trash2 size={14} /></button></td>}
                         </tr>
@@ -317,7 +326,7 @@ export default function DayTaskLog({ personId, date, plan, extra, readOnly, kind
           <p className="text-sm">{kind === 'day' ? 'Day' : 'Week'} total: planned <b>{fmtMin(plannedAll)}</b> · estimated <b data-testid={`${kind}-est`}>{fmtMin(all.est)}</b> · actual <b data-testid={`${kind}-act`}>{fmtMin(all.act)}</b></p>
           {!readOnly && (
             <span className="ml-auto flex gap-2">
-              {locked
+              {submitted ? null : locked
                 ? <Btn onClick={() => save(false)}><Save size={13} /> {kind === 'day' ? 'Save end of day' : 'Save end of week'}</Btn>
                 : <Btn onClick={() => save(true)}><Lock size={13} /> {rec.entriesAt ? 'Update and lock' : 'Lock tasks'}</Btn>}
             </span>
