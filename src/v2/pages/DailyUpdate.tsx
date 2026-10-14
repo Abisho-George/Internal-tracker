@@ -8,7 +8,7 @@ import { Btn, Card, cx, fmtMin, input, safe } from '../ui';
 import { colorOf, DayTracker } from './Widgets';
 import { AUTO_METRICS, CustomRows, DateNav, dayRows, DurationInput, HoursStats, lastWorkingDay, NoteView, PendingHint, ReportTable } from './DailyViews';
 import { PlanBuilder } from './PlanBuilder';
-import DayTaskLog, { TargetsProgress, WeeklyAuto } from './DayTaskLog';
+import DayTaskLog, { TargetsProgress, WeeklyAuto, WeeklyHours } from './DayTaskLog';
 import { EodIcon, SodIcon, SUBMITTED, TaskLine, TimeBreakdown, UpdateSection } from './TaskUpdateSections';
 
 const TIMES = Array.from({ length: 19 }, (_, i) => `${String(10 + Math.floor(i / 2)).padStart(2, '0')}:${i % 2 ? '30' : '00'}`);
@@ -173,6 +173,7 @@ export default function DailyUpdate() {
       </div>
 
       <WeeklyAuto personId={me} date={date} />
+      <WeeklyHours personId={me} date={date} />
     </div>
   );
 }

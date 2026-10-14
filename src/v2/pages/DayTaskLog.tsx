@@ -595,3 +595,93 @@ function WeekAddRow({ personId, mon }: { personId: string; mon: string }) {
     </div>
   );
 }
+
+/** Weekly hours: where the week's time went, day by day and project by project, filled in from the day plans. Read-only. */
+export function WeeklyHours({ personId, date }: { personId: string; date: string }) {
+  const { daily, projects } = useStore();
+  const mon = weekStartOf(date);
+  const days = [0, 1, 2, 3, 4].map((i) => addDays(mon, i));
+  const WDN = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  const byDay = days.map((d) => {
+    const rec = daily[`${personId}|${d}`];
+    let planned = 0, actual = 0;
+    (rec?.plan ?? []).forEach((b) => { const m = blockMin(b); planned += m; actual += b.actualMinutes ?? (rec?.eodAt ? m : 0); });
+    const extra = (rec?.extra ?? []).reduce((a, x) => a + (x.minutes || 0), 0);
+    return { d, planned, actual, extra, sent: !!rec?.eodAt };
+  });
+  const byProject = new Map<string, { planned: number; actual: number; extra: number }>();
+  days.forEach((d) => {
+    const rec = daily[`${personId}|${d}`];
+    (rec?.plan ?? []).forEach((b) => {
+      if (b.id === 'lunch') return;
+      const pid = (b.custom ? b.custom.projectId ?? b.projectId : b.projectId) || `${OTHER}${b.custom?.title || 'Other work'}`;
+      const r = byProject.get(pid) ?? { planned: 0, actual: 0, extra: 0 };
+      const m = blockMin(b);
+      r.planned += m; r.actual += b.actualMinutes ?? (rec?.eodAt ? m : 0);
+      byProject.set(pid, r);
+    });
+    (rec?.extra ?? []).forEach((x) => {
+      const pid = x.projectId ?? `${OTHER}${x.work || 'Extra work'}`;
+      const r = byProject.get(pid) ?? { planned: 0, actual: 0, extra: 0 };
+      r.extra += x.minutes || 0;
+      byProject.set(pid, r);
+    });
+  });
+  const tot = byDay.reduce((a, x) => ({ planned: a.planned + x.planned, actual: a.actual + x.actual, extra: a.extra + x.extra }), { planned: 0, actual: 0, extra: 0 });
+  const projRows = [...byProject].sort((a, b) => b[1].actual + b[1].extra - (a[1].actual + a[1].extra) || b[1].planned - a[1].planned);
+  const maxP = Math.max(1, ...projRows.map(([, r]) => Math.max(r.planned, r.actual + r.extra)));
+  const th = 'pb-1 text-[11px] font-semibold uppercase tracking-wide text-muted';
+  return (
+    <section id="weekly-hours" aria-label="Weekly hours" className="overflow-hidden rounded-card bg-surface shadow-soft">
+      <div className="flex items-center gap-3 bg-mint/40 px-5 py-3">
+        <CalendarRange size={18} className="text-mint-ink" />
+        <div className="min-w-0 flex-1">
+          <h2 className="font-bold">Weekly hours</h2>
+          <p className="text-xs text-muted">{fmtDay(mon)} to {fmtDay(addDays(mon, 4))} · filled in from your day plans: where the week's time went</p>
+        </div>
+      </div>
+      <div className="space-y-4 px-5 py-4">
+        <div className="flex flex-wrap gap-x-5 gap-y-1 rounded-xl bg-surface-2 px-3 py-2 text-sm" data-testid="week-hours-total">
+          <span className="text-muted">Planned <b className="text-ink">{fmtMin(tot.planned)}</b></span>
+          <span className="text-muted">Actual <b className="text-ink">{fmtMin(tot.actual)}</b></span>
+          <span className="text-muted">Extra <b className="text-ink">{fmtMin(tot.extra)}</b></span>
+          <span className="text-muted">Total worked <b className="text-ink">{fmtMin(tot.actual + tot.extra)}</b></span>
+        </div>
+        <div className="grid gap-5 lg:grid-cols-2">
+          <table className="w-full text-sm" aria-label="Hours by day">
+            <thead><tr className="border-b border-line text-left"><th className={th}>Day</th><th className={cx(th, 'text-right')}>Planned</th><th className={cx(th, 'text-right')}>Actual</th><th className={cx(th, 'text-right')}>Extra</th></tr></thead>
+            <tbody>
+              {byDay.map((x) => (
+                <tr key={x.d} className="border-b border-line/70" data-week-hours-day={x.d}>
+                  <td className="py-1.5">{WDN[new Date(`${x.d}T12:00:00`).getDay()]} {fmtDay(x.d)} {x.sent && <span className="ml-1 text-[10px] font-semibold text-mint-ink">sent</span>}</td>
+                  <td className="py-1.5 text-right tabular-nums text-muted">{x.planned ? fmtMin(x.planned) : '·'}</td>
+                  <td className="py-1.5 text-right font-semibold tabular-nums">{x.actual ? fmtMin(x.actual) : '·'}</td>
+                  <td className="py-1.5 text-right tabular-nums">{x.extra ? fmtMin(x.extra) : '·'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <div aria-label="Hours by project">
+            <p className={th}>By project</p>
+            {projRows.length === 0 ? <p className="mt-1 text-sm text-muted">No day plans this week yet.</p> : (
+              <ul className="mt-1 space-y-2">
+                {projRows.map(([pid, r]) => (
+                  <li key={pid} className="text-sm" data-week-hours-project={pid}>
+                    <p className="flex items-center justify-between gap-2">
+                      <span className="flex min-w-0 items-center gap-1.5 truncate font-medium"><span className="inline-block h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: pid.startsWith(OTHER) ? '#64748B' : colorOf(projects, pid) }} />{groupName(pid, projects)}</span>
+                      <span className="shrink-0 text-xs tabular-nums text-muted">{fmtMin(r.actual + r.extra)} worked · {fmtMin(r.planned)} planned{r.extra ? ` · ${fmtMin(r.extra)} extra` : ''}</span>
+                    </p>
+                    <div className="mt-1 flex h-2 overflow-hidden rounded-full bg-surface-2">
+                      <div className="h-full bg-sky-strong" style={{ width: `${(r.actual / maxP) * 100}%` }} />
+                      <div className="h-full bg-lavender-strong" style={{ width: `${(r.extra / maxP) * 100}%` }} />
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
