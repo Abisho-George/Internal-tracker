@@ -1,15 +1,15 @@
 import { useMemo, useState, type ReactNode } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { ArrowDown, ArrowUp, ArrowUpDown } from 'lucide-react';
 import { useChartColors } from '@/theme/useChartColors';
 import { KPI_LABEL, KPIS, personSeries, shiftPeriod, TAG_LABEL, teamTable, type Gran, type Kpi, type KpiValues, type TeamRow } from '../analytics';
 import { PEOPLE } from '../data';
 import { nameOf } from '../store';
 import { Avatar, Card, Chip, H2, cx } from '../ui';
-import { AssignmentMix, Sparkline, WhereTimeGoes } from './analytics/charts';
+import { Sparkline } from './analytics/charts';
 import {
   changeOf, Delta, GranToggle, KPI_SHORT, KpiPicker, KpiValue, PeriodSelect, periodNoun, Segmented, useEarliest, usePeriodOptions, useSlice,
 } from './analytics/controls';
-import { PersonModal } from './analytics/PersonModal';
 
 type SortCol = 'name' | Kpi | 'change' | 'tag';
 type Dir = 'asc' | 'desc';
@@ -40,7 +40,8 @@ export default function People() {
   const [idx, setIdx] = useState(() => { const d = new Date().getDay(); return d >= 1 && d <= 3 ? 1 : 0; });
   const [role, setRole] = useState<RoleFilter>('all');
   const [sort, setSort] = useState<{ col: SortCol; dir: Dir }>({ col: 'name', dir: 'asc' });
-  const [open, setOpen] = useState<string | null>(null);
+  const navigate = useNavigate();
+  const setOpen = (id: string) => navigate(`/people/${id}`);
 
   const options = usePeriodOptions(gran, earliest);
   const i = Math.min(idx, options.length - 1);
@@ -67,8 +68,6 @@ export default function People() {
   const totals = useMemo(() => teamTotals(rows), [rows]);
   const prevTotals = useMemo(() => teamTotals(rows.map((r) => r.prev)), [rows]);
 
-  const ack = all.filter((r) => r.tag === 'acknowledge');
-  const sup = all.filter((r) => r.tag === 'support');
   const noun = periodNoun(gran);
 
   const sortBy = (col: SortCol) => setSort((s) => (s.col === col ? { col, dir: s.dir === 'asc' ? 'desc' : 'asc' } : { col, dir: col === 'name' ? 'asc' : 'desc' }));
@@ -89,7 +88,7 @@ export default function People() {
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-bold">People</h1>
-        <p className="text-sm text-muted">Everyone's daily, weekly and monthly progress: who to acknowledge, who needs support, and where the time goes.</p>
+        <p className="text-sm text-muted">Everyone at a glance. Click a person to see their daily, weekly and monthly performance, task history and current work.</p>
       </div>
 
       <Card className="!py-4">
@@ -103,31 +102,6 @@ export default function People() {
           Showing <b className="text-ink">{period.title}</b>{period.partial ? ' (so far)' : ''}, compared with the previous {noun} ({prev.title}).
         </p>
       </Card>
-
-      <div className="grid gap-4 md:grid-cols-2">
-        {([['acknowledge', ack, 'Top performers this ' + noun], ['support', sup, 'May need support or training']] as const).map(([tag, list, sub]) => (
-          <Card key={tag} className={cx('border-l-4', tag === 'acknowledge' ? 'border-mint-strong' : 'border-coral-strong')}>
-            <div data-testid={`callout-${tag}`}>
-              <H2 right={<span className="text-xs text-muted">{sub}</span>}>{TAG_LABEL[tag]}</H2>
-              {list.length === 0 ? <p className="text-sm text-muted">Nobody in this {noun}.</p> : (
-                <ul className="space-y-2">
-                  {list.map((r) => (
-                    <li key={r.personId}>
-                      <button type="button" onClick={() => setOpen(r.personId)} className="focus-ring flex w-full items-center gap-3 rounded-xl p-1.5 text-left hover:bg-surface-2">
-                        <Avatar id={r.personId} size="sm" />
-                        <span className="min-w-0 flex-1">
-                          <span className="block text-sm font-semibold">{nameOf(r.personId)}</span>
-                          <span className="block text-xs text-muted">{r.tagReason}</span>
-                        </span>
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
-          </Card>
-        ))}
-      </div>
 
       <Card>
         <H2 right={
@@ -186,21 +160,10 @@ export default function People() {
           </table>
         </div>
         <p className="mt-3 text-xs text-muted">
-          Click a column to sort, click a person for their profile. Flags compare each person with the team in the same {noun}. Hours logged is time recorded on submitted tasks; extra hours come from end-of-day updates.
+          Click a column to sort, click a person to open their page. Flags compare each person with the team in the same {noun}. Hours logged is time recorded on submitted tasks; extra hours come from end-of-day updates.
         </p>
       </Card>
 
-      <Card>
-        <H2 right={<span className="text-xs text-muted">Team, {period.title}</span>}>Where time goes</H2>
-        <WhereTimeGoes from={period.from} to={period.to} />
-      </Card>
-
-      <Card>
-        <H2 right={<span className="text-xs text-muted">Tasks assigned for {period.title}</span>}>Assigned vs standard time, by assigner</H2>
-        <AssignmentMix from={period.from} to={period.to} />
-      </Card>
-
-      <PersonModal personId={open} gran={gran} kpi={kpi} index={i} onClose={() => setOpen(null)} />
     </div>
   );
 }

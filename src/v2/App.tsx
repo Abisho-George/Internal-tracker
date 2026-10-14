@@ -13,6 +13,7 @@ import Profile from './pages/Profile';
 import DailyUpdate from './pages/DailyUpdate';
 import TeamDaily from './pages/TeamDaily';
 import Assign from './pages/Assign';
+import PersonPage from './pages/PersonPage';
 import People from './pages/People';
 import Chat from './pages/Chat';
 import { ProjectSetup } from './pages/ProjectSetup';
@@ -117,6 +118,7 @@ function Shell() {
             <Route path="/profile" element={<Profile />} />
             {(lead || ownsProject) && <Route path="/assign" element={<Assign key={me} />} />}
             {lead && <Route path="/people" element={<People />} />}
+            {lead && <Route path="/people/:id" element={<PersonPage />} />}
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </main>
