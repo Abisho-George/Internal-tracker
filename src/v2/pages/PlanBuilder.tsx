@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
-import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
+import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
+import { AnimatePresence, motion, Reorder, useDragControls, useReducedMotion } from 'framer-motion';
 import { CalendarClock, Copy, GripVertical, Lock, Plus, Trash2, Unlock, UtensilsCrossed, Wand2 } from 'lucide-react';
 import { toast } from '@/components';
 import { previousWorkingDay, toMinutes } from '../data';
@@ -180,8 +180,18 @@ export function PlanBuilder({ plan, setPlan, extra, setExtra, personId, date }: 
     }
     return [...others.slice(0, at), dragItem, ...others.slice(at)];
   };
-  const shown = preview('plan');
-  const shownX = preview('extra');
+  // Rows below the line can be dragged up and down too; while they move, the line follows.
+  const [rowOrder, setRowOrder] = useState<PlanItem[] | null>(null);
+  const [rowOrderX, setRowOrderX] = useState<PlanItem[] | null>(null);
+  const rowRef = useRef<{ plan: PlanItem[] | null; extra: PlanItem[] | null }>({ plan: null, extra: null });
+  rowRef.current = { plan: rowOrder, extra: rowOrderX };
+  const shown = rowOrder ?? preview('plan');
+  const shownX = rowOrderX ?? preview('extra');
+  const endRowDrag = (l: Lane) => {
+    const order = rowRef.current[l];
+    if (order) { if (l === 'plan') commit(order); else commitExtra(order); }
+    if (l === 'plan') setRowOrder(null); else setRowOrderX(null);
+  };
   const laid = useMemo(() => toPlan(shown, lunch), [shown, lunch]);
   const laidX = layExtra(shownX);
 
@@ -377,13 +387,12 @@ export function PlanBuilder({ plan, setPlan, extra, setExtra, personId, date }: 
       </div>
 
       {(items.length > 0 || xItems.length > 0) && (
-        <ul className="divide-y divide-line overflow-hidden rounded-xl border border-line" aria-label="Blocks">
-          <AnimatePresence initial={false}>
+        <div className="overflow-hidden rounded-xl border border-line" aria-label="Blocks">
+          <Reorder.Group as="ul" axis="y" values={shown} onReorder={setRowOrder} className="divide-y divide-line">
             {shown.map((it, i) => {
               const parts = laid.filter((b) => b.id.split('~')[0] === it.id);
               return (
-                <motion.li key={it.id} layout={!reduce} transition={t} initial={reduce ? false : { opacity: 0, x: -16 }} animate={{ opacity: drag?.moved && drag.id === it.id ? 0.5 : 1, x: 0 }} exit={{ opacity: 0, x: 24, height: 0 }}
-                  className="flex flex-wrap items-center gap-2 bg-surface px-3 py-2 text-sm" data-plan-row={it.id}>
+                <DragRow key={it.id} value={it} onEnd={() => endRowDrag('plan')} faded={!!(drag?.moved && drag.id === it.id)} className="bg-surface" data={{ 'data-plan-row': it.id }}>
                   <span className="w-5 text-xs font-bold text-muted">{i + 1}</span>
                   <span className="inline-block h-3 w-3 rounded-full" style={{ background: colorFor(it.projectId, it.custom, projects) }} />
                   <span className="min-w-[10rem] flex-1 font-semibold">{nameOf(it.projectId, it.custom, projects)}
@@ -396,29 +405,51 @@ export function PlanBuilder({ plan, setPlan, extra, setExtra, personId, date }: 
                     <DurationInput label="Actual time" className="w-20" placeholder="..." value={it.actual} onChange={(m) => commit(items.map((x) => (x.id === it.id ? { ...x, actual: m ?? undefined } : x)))} />
                   </label>
                   <button aria-label="Remove block" className="focus-ring rounded-lg p-1.5 text-muted hover:bg-surface-2 hover:text-coral-ink" onClick={() => remove(it.id)}><Trash2 size={14} /></button>
-                </motion.li>
+                </DragRow>
               );
             })}
-            {shownX.map((it) => {
-              const x = laidX.find((r) => r.id === it.id);
-              return (
-                <motion.li key={it.id} layout={!reduce} transition={t} initial={reduce ? false : { opacity: 0, x: -16 }} animate={{ opacity: drag?.moved && drag.id === it.id ? 0.5 : 1, x: 0 }} exit={{ opacity: 0, x: 24, height: 0 }}
-                  className="flex flex-wrap items-center gap-2 bg-lavender/20 px-3 py-2 text-sm" data-extra-row={it.id}>
-                  <span className="rounded bg-lavender-strong px-1.5 py-0.5 text-[9px] font-bold text-white">EXTRA</span>
-                  <span className="inline-block h-3 w-3 rounded-full" style={{ background: colorFor(it.projectId, undefined, projects) }} />
-                  <span className="min-w-[10rem] flex-1 font-semibold">{nameOf(it.projectId, undefined, projects)}
-                    <span className="block text-xs font-normal text-muted"><CalendarClock size={11} className="mr-1 inline" />{x?.start} to {x?.end}</span>
-                  </span>
-                  <label className="flex items-center gap-1 text-xs text-muted">Time
-                    <DurationInput label="Extra time" className="w-20" value={it.minutes} onChange={(m) => m && m >= 5 && commitExtra(xItems.map((y) => (y.id === it.id ? { ...y, minutes: m } : y)))} />
-                  </label>
-                  <button aria-label="Remove extra hours" className="focus-ring rounded-lg p-1.5 text-muted hover:bg-surface-2 hover:text-coral-ink" onClick={() => remove(it.id, 'extra')}><Trash2 size={14} /></button>
-                </motion.li>
-              );
-            })}
-          </AnimatePresence>
-        </ul>
+          </Reorder.Group>
+          {shownX.length > 0 && (
+            <Reorder.Group as="ul" axis="y" values={shownX} onReorder={setRowOrderX} className={cx('divide-y divide-line', shown.length > 0 && 'border-t border-line')}>
+              {shownX.map((it) => {
+                const x = laidX.find((r) => r.id === it.id);
+                return (
+                  <DragRow key={it.id} value={it} onEnd={() => endRowDrag('extra')} faded={!!(drag?.moved && drag.id === it.id)} className="bg-lavender/20" data={{ 'data-extra-row': it.id }}>
+                    <span className="rounded bg-lavender-strong px-1.5 py-0.5 text-[9px] font-bold text-white">EXTRA</span>
+                    <span className="inline-block h-3 w-3 rounded-full" style={{ background: colorFor(it.projectId, undefined, projects) }} />
+                    <span className="min-w-[10rem] flex-1 font-semibold">{nameOf(it.projectId, undefined, projects)}
+                      <span className="block text-xs font-normal text-muted"><CalendarClock size={11} className="mr-1 inline" />{x?.start} to {x?.end}</span>
+                    </span>
+                    <label className="flex items-center gap-1 text-xs text-muted">Time
+                      <DurationInput label="Extra time" className="w-20" value={it.minutes} onChange={(m) => m && m >= 5 && commitExtra(xItems.map((y) => (y.id === it.id ? { ...y, minutes: m } : y)))} />
+                    </label>
+                    <button aria-label="Remove extra hours" className="focus-ring rounded-lg p-1.5 text-muted hover:bg-surface-2 hover:text-coral-ink" onClick={() => remove(it.id, 'extra')}><Trash2 size={14} /></button>
+                  </DragRow>
+                );
+              })}
+            </Reorder.Group>
+          )}
+        </div>
       )}
     </div>
+  );
+}
+
+/** A row in the block list that can be dragged up or down by its handle. */
+function DragRow({ value, onEnd, faded, className, data, children }: { value: PlanItem; onEnd: () => void; faded: boolean; className: string; data: Record<string, string>; children: ReactNode }) {
+  const controls = useDragControls();
+  const reduce = useReducedMotion();
+  return (
+    <Reorder.Item as="li" value={value} dragListener={false} dragControls={controls} onDragEnd={onEnd} {...data}
+      initial={reduce ? false : { opacity: 0, x: -16 }} animate={{ opacity: faded ? 0.5 : 1, x: 0 }} exit={{ opacity: 0, x: 24, height: 0 }}
+      transition={reduce ? { duration: 0 } : SPRING}
+      whileDrag={{ scale: 1.02, boxShadow: '0 14px 30px -10px rgb(0 0 0 / 0.35)', zIndex: 10 }}
+      className={cx('relative flex flex-wrap items-center gap-2 px-3 py-2 text-sm', className)}>
+      <button type="button" aria-label="Drag to reorder" title="Drag up or down" onPointerDown={(e) => { e.preventDefault(); controls.start(e); }}
+        className="-ml-1 cursor-grab touch-none rounded p-1 text-muted hover:bg-surface-2 hover:text-ink active:cursor-grabbing">
+        <GripVertical size={15} />
+      </button>
+      {children}
+    </Reorder.Item>
   );
 }
