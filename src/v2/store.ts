@@ -166,6 +166,8 @@ interface Actions {
   /** Send work that was never assigned straight for approval. */
   requestApproval: (a: { projectId: string; title: string; links: string[]; reviewerId: string; minutes?: number; note?: string }) => void;
   approve: (id: string) => void;
+  /** Approve part of the work (e.g. 20 of 30); the rest goes back as a rework task that carries over until it is done. */
+  approvePart: (id: string, approvedQty: number, note: string) => void;
   sendBack: (id: string, text: string) => void;
   assign: (a: AssignInput) => void;
   assignMany: (items: AssignInput[]) => void;
@@ -775,6 +777,33 @@ export const useStore = create<Data & Actions>()(
           const at = iso();
           patch(id, { status: 'done', approvedAt: at, reviews: [...t.reviews, { by: get().me, verdict: 'approved', at }], history: [...(t.history ?? []), { at, by: get().me, action: 'approved' }] });
           notify(t.assigneeId, `${first(get().me)} approved ${t.title} ✓`);
+        },
+        approvePart: (id, approvedQty, note) => {
+          const t = task(id);
+          const done = t.doneQty ?? t.qty;
+          const a = Math.round(approvedQty);
+          if (!(a >= 1) || a >= t.qty) throw new Error(`Approve between 1 and ${t.qty - 1} (or use Approve for all of it).`);
+          if (a > done) throw new Error(`Only ${done} were submitted.`);
+          if (!note.trim()) throw new Error('Say what needs rework for the rest.');
+          const at = iso();
+          const me = get().me;
+          const rest = t.qty - a;
+          const share = (n: number) => Math.max(1, Math.round((t.targetMinutes * n) / t.qty));
+          const retitle = (n: number) => (/^\d+/.test(t.title) ? t.title.replace(/^\d+/, String(n)) : `${n} of ${t.title}`);
+          // The approved part keeps all the time spent, so taking longer than the target for what was approved counts against on time.
+          patch(id, {
+            status: 'done', qty: a, doneQty: a, title: retitle(a), targetMinutes: share(a), standardMinutes: t.standardMinutes ? Math.round((t.standardMinutes * a) / t.qty) : undefined,
+            approvedAt: at, reviews: [...t.reviews, { by: me, verdict: 'approved', at }],
+            history: [...(t.history ?? []), { at, by: me, action: 'approved', note: `Approved ${a} of ${t.qty}; ${rest} sent back for rework` }],
+          });
+          const rework: Task = {
+            ...t, id: uid(), qty: rest, doneQty: undefined, minutes: undefined, title: retitle(rest), targetMinutes: share(rest),
+            standardMinutes: t.standardMinutes ? Math.round((t.standardMinutes * rest) / t.qty) : undefined, status: 'changes', reworkOf: id,
+            feedback: [...t.feedback, { by: me, text: note.trim(), at }], reviews: [{ by: me, verdict: 'feedback', at }], approvedAt: undefined, submittedAt: undefined, resubmits: 0,
+            history: [...(t.history ?? []), { at, by: me, action: 'feedback', note: `${rest} of ${t.qty} need rework: ${note.trim()}` }],
+          };
+          set((s) => ({ tasks: [rework, ...s.tasks] }));
+          notify(t.assigneeId, `${first(me)} approved ${a} of ${t.qty} on ${t.title}. ${rest} need rework: ${note.trim()}`);
         },
         sendBack: (id, text) => {
           const t = task(id);

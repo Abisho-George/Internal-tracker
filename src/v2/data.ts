@@ -453,6 +453,8 @@ export interface Task {
   approvedAt?: string;
   /** Links shared with the reviewer (sheets, docs). */
   links?: string[];
+  /** The rest of a task sent back after part of it was approved (points at the approved part). */
+  reworkOf?: string;
   /** Sent for approval directly, without being assigned first. */
   adhoc?: boolean;
   /** Sample history from before the demo: shown in calendars and logs, not re-counted in live project numbers. */

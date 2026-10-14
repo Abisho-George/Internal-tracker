@@ -312,6 +312,7 @@ export function TaskRow({ task }: { task: Task }) {
             {task.priority && <Chip tone="coral"><Star size={11} /> Priority · {first(task.assignedById)}</Chip>}
             {carried && <Chip tone="butter"><History size={11} /> {task.date === day(-1) ? 'From yesterday' : `Carried over from ${['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][new Date(`${task.date}T12:00:00`).getDay()]} ${fmtDay(task.date)}`}</Chip>}
             {task.reminders > 0 && task.status !== 'done' && <Chip tone="peach">⏰ Reminded</Chip>}
+            {task.reworkOf && task.status !== 'done' && <Chip tone="butter"><Repeat size={11} /> Rework of a part-approved task</Chip>}
             <ResubmitChip task={task} />
           </p>
           <p className="text-xs text-muted">
@@ -380,9 +381,10 @@ export function TaskRow({ task }: { task: Task }) {
 
 /** One line in a reviewer's queue: see the history, then approve, give feedback, or forward to someone else. */
 export function ReviewRow({ task, projectName }: { task: Task; projectName: string }) {
-  const { approve, sendBack, forwardReview } = useStore();
+  const { approve, approvePart, sendBack, forwardReview } = useStore();
   const options = useReviewerOptions(task.projectId).filter((o) => o.id !== task.assigneeId);
-  const [mode, setMode] = useState<null | 'feedback' | 'forward'>(null);
+  const [mode, setMode] = useState<null | 'feedback' | 'forward' | 'part'>(null);
+  const [partQty, setPartQty] = useState('');
   const [fb, setFb] = useState('');
   const [to, setTo] = useState(options[0]?.id ?? '');
   const ev = events(task);
@@ -412,6 +414,7 @@ export function ReviewRow({ task, projectName }: { task: Task; projectName: stri
         <PaceChip task={task} />
         <Btn onClick={() => safe(() => { approve(task.id); toast({ title: `Approved, ${first(task.assigneeId)} notified`, tone: 'success' }); })}><Check size={13} /> Approve</Btn>
         <Btn tone="ghost" className="border border-line" onClick={() => setMode(mode === 'feedback' ? null : 'feedback')}><MessageSquare size={13} /> Feedback</Btn>
+        {!task.adhoc && task.qty > 1 && <Btn tone="ghost" className="border border-line" onClick={() => { setPartQty(''); setMode(mode === 'part' ? null : 'part'); }}><CheckCheck size={13} /> Approve part</Btn>}
         <Btn tone="ghost" className="border border-line" onClick={() => setMode(mode === 'forward' ? null : 'forward')}><Forward size={13} /> Forward</Btn>
       </div>
       {showHistory && <HistoryTimeline task={task} className="mt-2 sm:ml-10" />}
@@ -422,6 +425,22 @@ export function ReviewRow({ task, projectName }: { task: Task; projectName: stri
         }}>
           <input className={input} autoFocus placeholder="What should they change?" value={fb} onChange={(e) => setFb(e.target.value)} />
           <Btn type="submit">Send</Btn>
+        </form>
+      )}
+      {mode === 'part' && (
+        <form className="mt-2 flex flex-wrap items-end gap-2 rounded-xl bg-surface-2/60 p-3 sm:ml-10" data-testid="approve-part" onSubmit={(e) => {
+          e.preventDefault();
+          const n = Math.round(+partQty);
+          if (safe(() => approvePart(task.id, n, fb))) { toast({ title: `Approved ${n}, ${task.qty - n} sent back to ${first(task.assigneeId)}`, tone: 'success' }); setFb(''); setMode(null); }
+        }}>
+          <label className="text-xs font-semibold text-muted">Approve how many?
+            <span className="mt-1 flex items-center gap-1.5"><input aria-label="Approved quantity" type="number" min={1} max={task.qty - 1} autoFocus className={cx(input, 'w-24 text-right')} value={partQty} onChange={(e) => setPartQty(e.target.value)} placeholder={String(Math.floor(task.qty / 2))} />
+            <span className="text-sm text-ink">of {task.qty} {task.unit}</span></span>
+          </label>
+          <label className="min-w-[14rem] flex-1 text-xs font-semibold text-muted">What needs rework for the rest?
+            <input aria-label="Rework note" className={cx(input, 'mt-1')} placeholder="e.g. Wrong persona on 10 of them, redo with the CFO angle" value={fb} onChange={(e) => setFb(e.target.value)} />
+          </label>
+          <Btn type="submit"><Check size={13} /> {+partQty > 0 && +partQty < task.qty ? `Approve ${Math.round(+partQty)}, send back ${task.qty - Math.round(+partQty)}` : 'Approve part'}</Btn>
         </form>
       )}
       {mode === 'forward' && (

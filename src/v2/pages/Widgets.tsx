@@ -82,24 +82,38 @@ export function Spotlights() {
   useStore((s) => s.profiles); // re-render when names/photos change
   const [open, setOpen] = useState<null | 'project' | 'resource' | 'pm'>(null);
   const daily = useStore((s) => s.daily);
-  // Ranked from real task data (same numbers as the People tab): on-time % this month, then tasks done.
+  // Ranked from real task data: on-time % this month and the share of assigned work done (approved).
   const rows = useMemo(() => teamTable({ tasks, daily }, 'month', 'current', { people: PEOPLE.map((p) => p.id) }), [tasks, daily]);
   const s = useMemo(() => {
+    // Score = on-time % and done-vs-assigned % (by quantity, approved work only), weighted equally.
+    const m0 = `${day(0).slice(0, 7)}-01`;
+    const doneShare = (id: string) => {
+      let assigned = 0, done = 0;
+      tasks.forEach((t) => {
+        if (t.assigneeId !== id || t.adhoc || t.date < m0 || t.date > day(0)) return;
+        assigned += t.qty;
+        if (t.status === 'done') done += Math.min(t.qty, t.doneQty ?? t.qty);
+      });
+      return assigned ? Math.round((done / assigned) * 100) : null;
+    };
     const best = (role: string) => {
       const ids = new Set(PEOPLE.filter((p) => p.role === role).map((p) => p.id));
-      const r = rows.filter((x) => ids.has(x.personId) && x.onTime != null && x.tasks > 0).sort((a, b) => b.onTime! - a.onTime! || b.tasks - a.tasks)[0];
-      return r ? { ...PEOPLE.find((p) => p.id === r.personId)!, row: r } : undefined;
+      const scored = rows.filter((x) => ids.has(x.personId) && x.onTime != null && x.tasks > 0).map((x) => {
+        const completion = doneShare(x.personId) ?? 0;
+        return { x, completion, score: (x.onTime! + completion) / 2 };
+      }).sort((a, b) => b.score - a.score || b.x.tasks - a.x.tasks)[0];
+      return scored ? { ...PEOPLE.find((p) => p.id === scored.x.personId)!, row: scored.x, completion: scored.completion } : undefined;
     };
     const active = projects.filter((p) => p.status === 'active');
     const project = [...active].sort((a, b) => (b.month.meetings ?? 0) / Math.max(1, b.monthTarget.meetings ?? 0) - (a.month.meetings ?? 0) / Math.max(1, a.monthTarget.meetings ?? 0))[0];
     return { resource: best('resource'), pm: best('pm'), project };
-  }, [projects, rows]);
+  }, [projects, rows, tasks]);
 
   const month = new Date().toLocaleDateString(undefined, { month: 'long' });
   const cards = [
-    { key: 'resource' as const, icon: Sparkles, title: 'Star Resource', id: s.resource?.id, name: s.resource ? nameOf(s.resource.id) : 'Not picked yet', stat: s.resource ? `${s.resource.row.onTime}% of tasks on time` : '', bg: 'from-[#0E9F6E] via-[#0B7F5B] to-[#065F46]' },
+    { key: 'resource' as const, icon: Sparkles, title: 'Star Resource', id: s.resource?.id, name: s.resource ? nameOf(s.resource.id) : 'Not picked yet', stat: s.resource ? `${s.resource.row.onTime}% on time · ${s.resource.completion}% of assigned work done` : '', bg: 'from-[#0E9F6E] via-[#0B7F5B] to-[#065F46]' },
     { key: 'project' as const, icon: Trophy, title: 'Project of the Month', id: undefined, name: s.project?.name ?? 'Not picked yet', stat: s.project ? `${s.project.month.meetings ?? 0} meetings booked` : '', bg: 'from-[#F59E0B] via-[#D97706] to-[#B45309]' },
-    { key: 'pm' as const, icon: Crown, title: 'Star Project Manager', id: s.pm?.id, name: s.pm ? nameOf(s.pm.id) : 'Not picked yet', stat: s.pm ? `${s.pm.row.onTime}% of tasks on time` : '', bg: 'from-[#1D3FA0] via-[#2747C9] to-[#4F46E5]' },
+    { key: 'pm' as const, icon: Crown, title: 'Star Project Manager', id: s.pm?.id, name: s.pm ? nameOf(s.pm.id) : 'Not picked yet', stat: s.pm ? `${s.pm.row.onTime}% on time · ${s.pm.completion}% of assigned work done` : '', bg: 'from-[#1D3FA0] via-[#2747C9] to-[#4F46E5]' },
   ];
 
   const person = open === 'resource' ? s.resource : open === 'pm' ? s.pm : undefined;
