@@ -57,7 +57,7 @@ function useLog(personId: string, kind: LogKind, date: string) {
   const rec = kind === 'day' ? daily[`${personId}|${key}`] ?? emptyDaily() : weekly[`${personId}|${key}`] ?? emptyWeekly();
   const prevKey = kind === 'day' ? previousWorkingDay(date) : addDays(key, -7);
   const prev = (kind === 'day' ? daily[`${personId}|${prevKey}`] : weekly[`${personId}|${prevKey}`])?.entries ?? [];
-  const save = (patch: { entries: TaskEntry[]; entriesAt?: string; sodAt?: string; entriesDoneAt?: string }) => (kind === 'day' ? saveDaily(personId, key, patch) : saveWeekly(personId, key, patch));
+  const save = (patch: { entries: TaskEntry[]; entriesAt?: string; sodAt?: string; entriesDoneAt?: string; actualsAt?: string; eodAt?: string }) => (kind === 'day' ? saveDaily(personId, key, patch) : saveWeekly(personId, key, patch));
   return { key, rec, prev, save, sodAt: kind === 'day' ? (rec as ReturnType<typeof emptyDaily>).sodAt : undefined };
 }
 
@@ -92,8 +92,11 @@ export default function DayTaskLog({ personId, date, plan, extra, readOnly, kind
     return () => window.removeEventListener(EDIT_EVENT, open);
   }, [readOnly, kind]);
   const locked = !!rec.entriesAt && !editing;
-  const submitted = !!rec.entriesDoneAt && !editing;
-  const ro = readOnly || submitted;
+  // Step 1 lock the targets, step 2 lock the actuals, step 3 send the end of day (or week).
+  const actualsDone = rec.actualsAt ?? rec.entriesDoneAt;
+  const actualsLocked = !!actualsDone && !editing;
+  const ro = readOnly || actualsLocked;
+  const canSend = !!rec.entriesAt && !!actualsDone && !editing && (!rec.entriesDoneAt || (rec.actualsAt ?? '') > rec.entriesDoneAt);
   const list = readOnly ? saved : rows;
   const edit = !readOnly && !locked;
   const what = kind === 'day' ? 'day' : 'week';
@@ -164,17 +167,23 @@ export default function DayTaskLog({ personId, date, plan, extra, readOnly, kind
     setRows((r) => [...r.filter((e) => e.projectId !== pid || e.task), ...from.map((e) => ({ ...e, id: newId(), actualMin: undefined, doneQty: undefined, status: undefined, actualText: undefined, achieved: '', remarks: '' }))]);
     toast({ title: `Copied ${from.length} task${from.length > 1 ? 's' : ''} from ${kind === 'day' ? 'the previous day' : 'last week'}`, tone: 'success' });
   };
-  const save = (lock: boolean) => safe(() => {
+  const save = (step: 'targets' | 'actuals') => safe(() => {
     const keep = rows.filter((e) => e.task && (e.task !== CUSTOM || e.custom?.trim()));
-    if (lock && !keep.length) throw new Error('Add at least one task before locking.');
+    if (!keep.length) throw new Error('Add at least one task before locking.');
     const at = new Date().toISOString();
-    // Saving the end of day / week (or updating after it was sent) submits it: everything locks with the time.
-    const done = !lock || !!rec.entriesDoneAt;
-    persist({ entries: keep, ...(lock ? { entriesAt: at, ...(kind === 'day' && !sodAt ? { sodAt: at } : {}) } : {}), ...(done ? { entriesDoneAt: at } : {}) });
+    // Updating after the actuals were locked locks both again, ready to send.
+    const reActuals = step === 'actuals' || !!actualsDone;
+    persist({ entries: keep, ...(step === 'targets' ? { entriesAt: at, ...(kind === 'day' && !sodAt ? { sodAt: at } : {}) } : {}), ...(reActuals ? { actualsAt: at } : {}) });
     setRows(keep);
     setEditing(false);
-    toast({ title: done ? `${kind === 'day' ? 'End of day' : 'End of week'} submitted at ${hhmm(at)} 🔒` : `${kind === 'day' ? 'Daily' : 'Weekly'} tasks locked 🔒`, tone: 'success' });
+    toast({ title: step === 'actuals' ? 'Actuals locked 🔒 You can send your end of ' + what + ' now.' : reActuals ? 'Updated and locked 🔒 Send it again when ready.' : 'Targets locked 🔒 Fill in the actuals as you go.', tone: 'success' });
   });
+  const send = () => safe(() => {
+    const at = new Date().toISOString();
+    persist({ entries: saved, entriesDoneAt: at, ...(kind === 'day' ? { eodAt: at } : {}) });
+    toast({ title: `End of ${what} sent at ${hhmm(at)} 🌙`, tone: 'success' });
+  });
+  const sendHint = !rec.entriesAt ? 'Lock your targets first' : !actualsDone ? 'Fill in the actuals and lock them first' : editing ? 'Finish updating first' : rec.entriesDoneAt && !canSend ? 'Already sent. Press Update to change something.' : `Send your end of ${what}`;
   const all = list.reduce((a, e) => ({ est: a.est + e.estMin, act: a.act + (e.actualMin ?? 0) }), { est: 0, act: 0 });
   const plannedAll = groups.reduce((a, g) => a + g.planned, 0);
   const mon = weekStartOf(date);
@@ -195,7 +204,12 @@ export default function DayTaskLog({ personId, date, plan, extra, readOnly, kind
           {rec.entriesDoneAt
             ? <span data-testid="done-time"><Chip tone="lavender"><Send size={11} /> {kind === 'day' ? 'End of day' : 'End of week'} {kind === 'day' ? hhmm(rec.entriesDoneAt) : dayHhmm(rec.entriesDoneAt)}</Chip></span>
             : rec.entriesAt && <Chip tone="grey">{kind === 'day' ? 'End of day' : 'End of week'} not sent</Chip>}
-          {!readOnly && locked && <Btn tone="ghost" className="border border-line" onClick={() => setEditing(true)}><Pencil size={13} /> Update tasks</Btn>}
+          {!readOnly && locked && <Btn tone="ghost" className="border border-line" onClick={() => setEditing(true)}><Pencil size={13} /> Update</Btn>}
+          {!readOnly && (
+            <span title={sendHint} data-testid="send-eod-wrap">
+              <Btn disabled={!canSend} onClick={send} data-testid="send-eod"><Send size={13} /> {rec.entriesDoneAt ? `Send end of ${what} again` : `Send end of ${what}`}</Btn>
+            </span>
+          )}
         </div>
       </div>
 
@@ -326,9 +340,11 @@ export default function DayTaskLog({ personId, date, plan, extra, readOnly, kind
           <p className="text-sm">{kind === 'day' ? 'Day' : 'Week'} total: planned <b>{fmtMin(plannedAll)}</b> · estimated <b data-testid={`${kind}-est`}>{fmtMin(all.est)}</b> · actual <b data-testid={`${kind}-act`}>{fmtMin(all.act)}</b></p>
           {!readOnly && (
             <span className="ml-auto flex gap-2">
-              {submitted ? null : locked
-                ? <Btn onClick={() => save(false)}><Save size={13} /> {kind === 'day' ? 'Save end of day' : 'Save end of week'}</Btn>
-                : <Btn onClick={() => save(true)}><Lock size={13} /> {rec.entriesAt ? 'Update and lock' : 'Lock tasks'}</Btn>}
+              {!locked
+                ? <Btn onClick={() => save('targets')}><Lock size={13} /> {rec.entriesAt ? 'Update and lock' : 'Lock targets'}</Btn>
+                : !actualsLocked
+                  ? <Btn onClick={() => save('actuals')}><Save size={13} /> Lock actuals</Btn>
+                  : <span className="text-xs text-muted">{rec.entriesDoneAt && !canSend ? 'Sent. Press Update at the top to change anything.' : 'Targets and actuals locked. Send it from the top.'}</span>}
             </span>
           )}
         </div>

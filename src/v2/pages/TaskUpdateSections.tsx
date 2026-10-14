@@ -23,7 +23,7 @@ export function weekOf(date: string): [string, string] {
 
 /** Header + locked / editing shell shared by the four update sections. */
 export function UpdateSection({ id, icon, tone, title, subtitle, lockedAt, lockedLabel = 'Locked', editing, onEdit, children, view }: {
-  id?: string; icon: ReactNode; tone: string; title: string; subtitle: string; lockedAt?: string; lockedLabel?: string; editing: boolean; onEdit: () => void; children: ReactNode; view: ReactNode;
+  id?: string; icon: ReactNode; tone: string; title: string; subtitle: string; lockedAt?: string; lockedLabel?: string; editing: boolean; onEdit?: () => void; children: ReactNode; view: ReactNode;
 }) {
   const locked = !!lockedAt && !editing;
   return (
@@ -34,7 +34,7 @@ export function UpdateSection({ id, icon, tone, title, subtitle, lockedAt, locke
         {lockedAt ? <Chip tone="mint"><Lock size={11} /> {lockedLabel} {dayHhmm(lockedAt)}</Chip> : <Chip tone="butter">Not sent yet</Chip>}
       </div>
       <div className="flex-1 space-y-4 p-5">{locked ? view : children}</div>
-      {locked && <div className="border-t border-line px-5 py-3"><Btn tone="ghost" className="border border-line" onClick={onEdit}><Pencil size={13} /> Edit</Btn></div>}
+      {locked && onEdit && <div className="border-t border-line px-5 py-3"><Btn tone="ghost" className="border border-line" onClick={onEdit}><Pencil size={13} /> Edit</Btn></div>}
     </section>
   );
 }

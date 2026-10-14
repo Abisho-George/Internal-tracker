@@ -48,6 +48,8 @@ export interface WeeklyUpdate {
   entriesAt?: string;
   /** End of day / end of week sent from the task table: everything locks and shows this time. */
   entriesDoneAt?: string;
+  /** Actuals locked (after the targets): the end of day / week can be sent once this is set. */
+  actualsAt?: string;
 }
 export const emptyWeekly = (): WeeklyUpdate => ({ targetsNote: '', targetsCustom: [], eowNote: '', eowCustom: [] });
 
@@ -127,6 +129,8 @@ export interface DailyUpdate {
   entriesAt?: string;
   /** End of day / end of week sent from the task table: everything locks and shows this time. */
   entriesDoneAt?: string;
+  /** Actuals locked (after the targets): the end of day / week can be sent once this is set. */
+  actualsAt?: string;
 }
 /** One task row under a planned project: picked from the list (task type or project standard) or typed in. */
 export type EntryKind = 'number' | 'milestone' | 'text';
