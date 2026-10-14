@@ -7,7 +7,7 @@ import { weekTime } from '../analytics';
 import { emptyWeekly, first, useStore, type CustomRow, type DayBlock, type ExtraHours } from '../store';
 import { Btn, Chip, cx, fmtMin, input, safe } from '../ui';
 import { colorOf } from './Widgets';
-import { BarList, CustomRows, dayHhmm, HoursStats, NoteView, PendingHint, targetsMet, weekLabel, weekRows } from './DailyViews';
+import {  CustomRows, dayHhmm, HoursStats, NoteView, targetsMet, weekLabel, weekRows } from './DailyViews';
 
 export const SUBMITTED = (t: Task) => (t.status === 'done' || t.status === 'in_review') && t.minutes != null;
 
@@ -140,10 +140,8 @@ export function WeeklySections({ personId, date }: { personId: string; date: str
   }, [personId, mon]);
   const week = tasks.filter((t) => t.assigneeId === personId && t.date >= mon && t.date <= addDays(mon, 6));
   const all = weekRows(tasks, personId, mon, saved, undefined, daily);
-  const taskOnly = all.rows.filter((r) => r.kind === 'task');
   const met = targetsMet(all.rows);
   const label = weekLabel(mon);
-  const hint = <PendingHint>Actuals fill in when you send your end of week</PendingHint>;
 
   return (
     <div className="grid items-start gap-6 xl:grid-cols-2">

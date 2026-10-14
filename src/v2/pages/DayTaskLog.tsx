@@ -10,7 +10,6 @@ import { WeekPlanner } from './Projects';
 
 export type LogKind = 'day' | 'week';
 const field = 'focus-ring w-full rounded-lg border border-line bg-surface px-2 py-1 text-sm text-ink';
-const num = 'focus-ring w-20 rounded-lg border border-line bg-surface px-2 py-1 text-right text-sm tabular-nums text-ink';
 const CUSTOM = '__custom';
 /** Rows for work outside any project use projectId `other:<name>`. */
 const OTHER = 'other:';
@@ -136,9 +135,9 @@ export default function DayTaskLog({ personId, date, plan, extra, readOnly, kind
   const renameGroup = () => {
     if (!renaming) return;
     const nm = renaming.name.trim();
-    if (!nm) { toast({ title: 'Type a name', tone: 'error' }); return; }
+    if (!nm) { toast({ title: 'Type a name', tone: 'info' }); return; }
     const to = `${OTHER}${nm}`;
-    if (to !== renaming.pid && groups.some((g) => g.pid === to)) { toast({ title: `${nm} is already in the list`, tone: 'error' }); return; }
+    if (to !== renaming.pid && groups.some((g) => g.pid === to)) { toast({ title: `${nm} is already in the list`, tone: 'info' }); return; }
     const move = (xs: TaskEntry[]) => xs.map((e) => (e.projectId === renaming.pid ? { ...e, projectId: to } : e));
     setRows(move);
     setAdded((a) => [...a.filter((x) => x !== renaming.pid), to]);
@@ -151,7 +150,7 @@ export default function DayTaskLog({ personId, date, plan, extra, readOnly, kind
     let pid = v;
     if (v === OTHER) {
       const nm = otherName.trim();
-      if (!nm) { toast({ title: 'Type what the extra work was', tone: 'error' }); return; }
+      if (!nm) { toast({ title: 'Type what the extra work was', tone: 'info' }); return; }
       pid = `${OTHER}${nm}`;
     }
     setAdded((a) => [...a, pid]);
@@ -546,8 +545,8 @@ function WeekAddRow({ personId, mon }: { personId: string; mon: string }) {
   const opts = optionsFor(projects.find((p) => p.id === pid));
   const field = 'focus-ring rounded-lg border border-line bg-surface px-2 py-1.5 text-sm text-ink';
   const add = () => {
-    if (!task) { toast({ title: 'Pick a task', tone: 'error' }); return; }
-    if (task === CUSTOM && !custom.trim()) { toast({ title: 'Type the task name', tone: 'error' }); return; }
+    if (!task) { toast({ title: 'Pick a task', tone: 'info' }); return; }
+    if (task === CUSTOM && !custom.trim()) { toast({ title: 'Type the task name', tone: 'info' }); return; }
     const rec = weekly[`${personId}|${mon}`];
     const base = { id: newId(), projectId: pid, task, custom: task === CUSTOM ? custom.trim() : undefined, desc: '', estMin: 0, achieved: '', remarks: '', kind: type };
     const e: TaskEntry = type === 'number'

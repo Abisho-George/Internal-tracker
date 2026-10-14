@@ -1,23 +1,17 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Clock3, Lock, Plus, Star, Trash2, Wand2 } from 'lucide-react';
+import {  Lock } from 'lucide-react';
 import { toast } from '@/components';
-import { toMinutes } from '../data';
+
 import { dayTime } from '../analytics';
-import { defaultPlan, emptyDaily, first, LUNCH, useStore, type CustomRow, type DayBlock, type ExtraHours, type ProjectNumbers } from '../store';
-import { Btn, Card, cx, fmtMin, input, safe } from '../ui';
-import { colorOf, DayTracker } from './Widgets';
-import { AUTO_METRICS, CustomRows, DateNav, dayRows, DurationInput, HoursStats, lastWorkingDay, NoteView, PendingHint, ReportTable } from './DailyViews';
+import {  emptyDaily, useStore, type CustomRow, type DayBlock, type ExtraHours, type ProjectNumbers } from '../store';
+import { Btn, Card, cx, input, safe } from '../ui';
+import { colorOf } from './Widgets';
+import { AUTO_METRICS, CustomRows, DateNav, HoursStats, lastWorkingDay, NoteView } from './DailyViews';
 import { PlanBuilder } from './PlanBuilder';
 import DayTaskLog, { TargetsProgress, WeeklyAuto, WeeklyHours } from './DayTaskLog';
-import { EodIcon, SodIcon, SUBMITTED, TaskLine, TimeBreakdown, UpdateSection } from './TaskUpdateSections';
+import { EodIcon, SodIcon, TaskLine, TimeBreakdown, UpdateSection } from './TaskUpdateSections';
 
-const TIMES = Array.from({ length: 19 }, (_, i) => `${String(10 + Math.floor(i / 2)).padStart(2, '0')}:${i % 2 ? '30' : '00'}`);
-let bid = 0;
-const LUNCH_ROW: DayBlock = { id: 'lunch', start: LUNCH.start, end: LUNCH.end, projectId: '', taskIds: [] };
 const field = 'focus-ring rounded-xl border border-line bg-surface px-2 py-1 text-sm text-ink';
-const blockMin = (b: Pick<DayBlock, 'start' | 'end'>) => Math.max(0, toMinutes(b.end) - toMinutes(b.start));
-/** Minutes between two "HH:mm" times, or undefined when either is missing or the end is not after the start. */
-const span = (start?: string, end?: string) => (start && end && end > start ? toMinutes(end) - toMinutes(start) : undefined);
 /** Drop extra-hours rows that were added but never filled in. */
 const cleanExtra = (rows: ExtraHours[]) => rows.filter((x) => x.work.trim() || x.minutes || x.start || x.end);
 
@@ -46,7 +40,7 @@ function NumbersGrid({ value, onChange }: { value: ProjectNumbers; onChange: (v:
 }
 
 export default function DailyUpdate() {
-  const { me, projects, tasks, daily, saveDaily } = useStore();
+  const { me, tasks, daily, saveDaily } = useStore();
   const [date, setDate] = useState(lastWorkingDay);
   const key = `${me}|${date}`;
   const saved = daily[key] ?? emptyDaily();
@@ -54,18 +48,14 @@ export default function DailyUpdate() {
   const [extra, setExtra] = useState<ExtraHours[]>(saved.extra ?? []);
   const [sodNote, setSodNote] = useState(saved.sodNote);
   const [sodTargets, setSodTargets] = useState<ProjectNumbers>(saved.sodTargets);
-  const [eodNote, setEodNote] = useState(saved.eodNote);
-  const [eodActuals, setEodActuals] = useState<ProjectNumbers>(saved.eodActuals);
   const [sodCustom, setSodCustom] = useState<CustomRow[]>(saved.sodCustom ?? []);
-  const [eodCustom, setEodCustom] = useState<CustomRow[]>(saved.eodCustom ?? []);
   const [editSod, setEditSod] = useState(false);
-  const [editEod, setEditEod] = useState(false);
   // Reload the form when switching person or date.
   useEffect(() => {
     const d = useStore.getState().daily[`${me}|${date}`] ?? emptyDaily();
-    setEditSod(false); setEditEod(false);
-    setPlan(d.plan); setExtra(d.extra ?? []); setSodCustom(d.sodCustom ?? []); setEodCustom(d.eodCustom ?? []);
-    setSodNote(d.sodNote); setSodTargets(d.sodTargets); setEodNote(d.eodNote); setEodActuals(d.eodActuals);
+    setEditSod(false);
+    setPlan(d.plan); setExtra(d.extra ?? []); setSodCustom(d.sodCustom ?? []);
+    setSodNote(d.sodNote); setSodTargets(d.sodTargets);
   }, [me, date]);
   /** After a save, pick up what the store normalised (ids, minutes from start / end). */
   const resync = () => {
@@ -73,31 +63,10 @@ export default function DailyUpdate() {
     if (d) { setPlan(d.plan); setExtra(d.extra ?? []); }
   };
 
-  const myProjects = projects.filter((p) => p.status === 'active' && (p.pmId === me || p.teamIds.includes(me) || p.admins?.includes(me)));
   const dayTasks = useMemo(() => tasks.filter((t) => t.assigneeId === me && t.date === date), [tasks, me, date]);
-  const doneToday = useMemo(() => dayTasks.filter(SUBMITTED), [dayTasks]);
   const sent = !!saved.eodAt;
   const time = dayTime({ plan, extra, eodAt: saved.eodAt });
-  const savedRows = useMemo(() => dayRows(tasks, projects, me, date, daily[key]), [tasks, projects, me, date, daily, key]);
-  const draftRows = useMemo(() => dayRows(tasks, projects, me, date, { ...saved, plan }, ['task', 'block']), [tasks, projects, me, date, saved, plan]);
 
-  const upd = (id: string, p: Partial<DayBlock>) => setPlan((x) => x.map((b) => (b.id === id ? { ...b, ...p } : b)));
-  const updC = (id: string, c: Partial<NonNullable<DayBlock['custom']>>) => setPlan((x) => x.map((b) => (b.id === id && b.custom ? { ...b, custom: { ...b.custom, ...c } } : b)));
-  const updX = (id: string, p: Partial<ExtraHours>) => setExtra((x) => x.map((r) => {
-    if (r.id !== id) return r;
-    const n = { ...r, ...p };
-    const s = span(n.start, n.end);
-    return s != null ? { ...n, minutes: s } : n;
-  }));
-  const addBlock = () => {
-    let last = [...plan].sort((a, b) => a.end.localeCompare(b.end)).at(-1)?.end ?? '10:00';
-    if (last >= LUNCH.start && last < LUNCH.end) last = LUNCH.end;
-    const endIdx = Math.min(TIMES.length - 1, last < LUNCH.start ? TIMES.indexOf(LUNCH.start) : TIMES.indexOf(last) + 4);
-    if (last >= '19:00') return toast({ title: 'Your day is already planned up to 7pm', tone: 'info' });
-    setPlan((x) => [...x, { id: `nb${Date.now().toString(36)}${++bid}`, start: last, end: TIMES[endIdx], projectId: myProjects[0]?.id ?? '', taskIds: [] }]);
-  };
-  const addExtra = () => setExtra((x) => [...x, { id: `nx${Date.now().toString(36)}${++bid}`, minutes: 0, work: '', projectId: myProjects[0]?.id }]);
-  const scrollToPlan = () => document.getElementById('plan-your-day')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
 
   return (
     <div className="space-y-6">

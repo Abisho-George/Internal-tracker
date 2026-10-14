@@ -15,7 +15,7 @@ const timeOf = (iso?: string) => (iso ? new Date(iso).toLocaleTimeString([], { h
 const numCell = 'focus-ring w-full rounded-lg border-2 border-line bg-surface px-2 py-1 text-xl font-extrabold tabular-nums text-ink outline-none focus:border-accent';
 
 /** Default weekly target (used for any week without its own plan) or the monthly target, with draft / locked states. */
-function TargetEditor({ p, period }: { p: Project; period: 'week' | 'month' }) {
+export function TargetEditor({ p, period }: { p: Project; period: 'week' | 'month' }) {
   const { setTarget, setLock } = useStore();
   const key = period === 'week' ? 'weekTarget' : 'monthTarget';
   const locked = period === 'week' ? p.weekLocked : p.monthLocked;
@@ -149,7 +149,7 @@ export function WeekPlanner({ p, date }: { p: Project; date?: string }) {
 }
 
 /** Add, rename or remove the numbers this project tracks (e.g. drop tele calls, add connections). */
-function MetricManager({ p }: { p: Project }) {
+export function MetricManager({ p }: { p: Project }) {
   const { addMetric, removeMetric, renameMetric, setMetricPeriods } = useStore();
   const [editing, setEditing] = useState(false);
   const [label, setLabel] = useState('');

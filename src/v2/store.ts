@@ -570,20 +570,6 @@ function seedEntries(projects: Project[], daily: Record<string, DailyUpdate>, we
       const mon = weekStart(w);
       const key = `${who}|${mon}`;
       const rec = weekly[key] ?? emptyWeekly();
-      // Built from that week's daily rows (same tasks), so achieved adds up from the days automatically.
-      const ds = [0, 1, 2, 3, 4].map((i) => addDays(mon, i)).filter((d) => daily[`${who}|${d}`]?.entries?.length);
-      const groups = new Map<string, TaskEntry>();
-      ds.forEach((d) => daily[`${who}|${d}`]!.entries!.forEach((e) => {
-        const k = `${e.projectId}|${e.task}|${e.custom ?? ''}`;
-        const g = groups.get(k);
-        if (g) { g.qty = (g.qty ?? 0) + (e.qty ?? 0); g.estMin += e.estMin; g.actualMin = (g.actualMin ?? 0) + (e.actualMin ?? 0); }
-        else groups.set(k, { ...e, id: mkId(`${who}w`), actualMin: e.actualMin ?? 0, doneQty: undefined, remarks: '' });
-      }));
-      const scale = ds.length ? 5 / ds.length : 1;
-      const entries = [...groups.values()].map((e) => ({
-        ...e, qty: Math.round(((e.qty ?? 0) * scale) / 5) * 5, estMin: Math.round((e.estMin * scale) / 15) * 15,
-        actualMin: w < 0 && e.actualMin ? e.actualMin : undefined, remarks: w < 0 ? REMARKS[Math.floor(rnd() * REMARKS.length)] : '',
-      }));
       weekly[key] = { ...rec, entries: [], entriesDoneAt: w < 0 ? new Date(`${addDays(mon, 4)}T18:15:00`).toISOString() : undefined, entriesAt: new Date(`${mon}T10:30:00`).toISOString() <= nowIso ? new Date(`${mon}T10:30:00`).toISOString() : undefined };
     });
   });

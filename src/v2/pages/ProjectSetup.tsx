@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
-import { ArrowRightLeft, CalendarRange, Crown, Plus, ShieldCheck, Trash, X } from 'lucide-react';
+import { ArrowRightLeft, Crown, Plus, ShieldCheck, Trash, X } from 'lucide-react';
 import { Modal, toast } from '@/components';
-import { day, DEFAULT_STANDARDS, fmtDay, isLeadRole, METRICS, PEOPLE, projectWeeks, roleOfPerson, weekStart, type Counts, type Project, type Standards } from '../data';
+import { day, DEFAULT_STANDARDS, isLeadRole, PEOPLE, projectWeeks, roleOfPerson, type Counts, type Project, type Standards } from '../data';
 import { first, nameOf, useStore, type CustomStandardInput, type TransferMode } from '../store';
 import { Avatar, Btn, cx, fmtMin, input, safe } from '../ui';
 
@@ -67,16 +67,14 @@ export function ProjectSetup({ open, onClose, edit }: { open: boolean; onClose: 
   const [admins, setAdmins] = useState<string[]>([]);
   const [newOwner, setNewOwner] = useState('');
   const [confirm, setConfirm] = useState<TransferMode | null>(null);
-  const [allWeeks, setAllWeeks] = useState(false);
   const [justAdded, setJustAdded] = useState('');
   const [weekT, setWeekT] = useState<Record<string, string>>({});
   const [plans, setPlans] = useState<Record<string, Record<string, string>>>({});
-  const [planWs, setPlanWs] = useState('');
   const [err, setErr] = useState('');
 
   useEffect(() => {
     if (!open) return;
-    setErr(''); setConfirm(null); setNewOwner(''); setAllWeeks(false); setDraftCs({ name: '', unit: '', minutes: '' }); setJustAdded('');
+    setErr(''); setConfirm(null); setNewOwner(''); setDraftCs({ name: '', unit: '', minutes: '' }); setJustAdded('');
     if (edit) {
       setName(edit.name); setClient(edit.client); setDescription(edit.description); setStart(edit.startDate); setEnd(edit.endDate);
       const ids = [...new Set([...Object.keys(edit.hours), ...edit.teamIds])];
@@ -89,10 +87,9 @@ export function ProjectSetup({ open, onClose, edit }: { open: boolean; onClose: 
   }, [open, edit]);
 
   const weeks = useMemo(() => (startDate && endDate && endDate >= startDate ? projectWeeks({ startDate, endDate }) : []), [startDate, endDate]);
-  const shownWeeks = allWeeks || weeks.length <= 9 ? weeks : weeks.slice(0, 8);
 
   const resetCreate = () => {
-    setWeekT({}); setPlans({}); setPlanWs('');
+    setWeekT({}); setPlans({});
     setName(''); setClient(''); setDescription(''); setTeam([]); setStd({ prospect: '2', l1: '2', l2: '1.5' }); setCustom([]); setAdmins([]); setErr('');
   };
 

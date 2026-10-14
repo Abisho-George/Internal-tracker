@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { AnimatePresence, motion } from 'framer-motion';
+import {  motion } from 'framer-motion';
 import { CalendarDays, CheckSquare, ChevronLeft, ChevronRight, Copy, FileText, Hash, Lock, Pencil, Plus, Trash2, Users, Wand2 } from 'lucide-react';
 import { toast } from '@/components';
 import { addDays, day, fmtDay, inPeriod, MONTHS, parseDay, PEOPLE, TASK_TYPES, weekStart, weekStartOf, weekTargetFor, type Counts, type CustomWeek, type Project, type TextTarget } from '../data';
@@ -28,7 +28,7 @@ function KindBadge({ kind }: { kind: Kind }) {
 }
 
 /** A small month calendar: click the first day, then the last day. */
-function RangePicker({ value, onPick, taken }: { value?: CustomWeek; onPick: (w: CustomWeek) => void; taken: CustomWeek[] }) {
+export function RangePicker({ value, onPick, taken }: { value?: CustomWeek; onPick: (w: CustomWeek) => void; taken: CustomWeek[] }) {
   const start = value?.start ?? day(0);
   const [view, setView] = useState(() => ({ y: parseDay(start).getFullYear(), m: parseDay(start).getMonth() }));
   const [pending, setPending] = useState<string | null>(null);
@@ -136,7 +136,6 @@ export function WeekManager({ p, period = 'week' }: { p: Project; period?: Perio
   const [sel, setSel] = useState<string | null>(cur);
   const weekKey = weeks.map((w) => w.start).join(',');
   useEffect(() => { if (!sel || !weeks.some((w) => w.start === sel)) setSel(weeks[weeks.length - 1]?.start ?? null); }, [weekKey]); // eslint-disable-line react-hooks/exhaustive-deps
-  const [picking, setPicking] = useState(false);
   const idx = weeks.findIndex((w) => w.start === sel);
   const week = weeks[idx];
 
@@ -146,17 +145,17 @@ export function WeekManager({ p, period = 'week' }: { p: Project; period?: Perio
     if (safe(() => api.setDates(null, w))) { setSel(w.start); toast({ title: `${nameOfPeriod(weeks.length, w)} added: ${fmtDay(w.start)} to ${fmtDay(w.end)}`, tone: 'success' }); }
   };
   const setDates = (w: CustomWeek) => {
-    if (safe(() => api.setDates(week?.start ?? null, w))) { setSel(w.start); setPicking(false); toast({ title: `${W} ${idx + 1}: ${fmtDay(w.start)} to ${fmtDay(w.end)}`, tone: 'success' }); }
+    if (safe(() => api.setDates(week?.start ?? null, w))) { setSel(w.start); toast({ title: `${W} ${idx + 1}: ${fmtDay(w.start)} to ${fmtDay(w.end)}`, tone: 'success' }); }
   };
 
   return (
     <div className="rounded-2xl border border-line p-4" data-testid={`${w_}-manager`}>
       <p className="flex items-center gap-2 font-bold"><CalendarDays size={16} className="text-accent-ink" /> {W}s and targets</p>
-      <p className="text-xs text-muted">Add a {w_}, set its days, then plan its targets. Add the next {w_} whenever you want to plan ahead.</p>
+      <p className="text-xs text-muted">Add a {w_}, pick its start and end date, then plan its targets. Add the next {w_} whenever you want to plan ahead.</p>
 
       <div className="mt-3 flex flex-wrap items-center gap-1.5" role="tablist" aria-label={`${W}s`}>
         {weeks.map((w, i) => (
-          <button key={w.start} role="tab" aria-selected={sel === w.start} onClick={() => { setSel(w.start); setPicking(false); }}
+          <button key={w.start} role="tab" aria-selected={sel === w.start} onClick={() => setSel(w.start)}
             className={cx('focus-ring relative flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-semibold transition-colors', sel === w.start ? 'border-transparent text-white' : 'border-line bg-surface text-ink hover:border-accent/50')}>
  {sel === w.start && <motion.span layoutId={`${w_}-pill`} className="absolute inset-0 rounded-full" style={{ background: WEEK_COLORS[i % WEEK_COLORS.length] }} transition={{ type: 'spring', stiffness: 500, damping: 36 }} />}
             <span className="relative">{nameOfPeriod(i, w)}</span>
@@ -174,20 +173,21 @@ export function WeekManager({ p, period = 'week' }: { p: Project; period?: Perio
         <div className="mt-3 space-y-3">
           <div className="flex flex-wrap items-center gap-2 rounded-xl bg-surface-2/60 px-3 py-2">
             <span className="h-3 w-3 rounded-full" style={{ background: WEEK_COLORS[idx % WEEK_COLORS.length] }} />
-            <b>{nameOfPeriod(idx, week)}</b><span className="text-sm" data-testid={`${w_}-dates`}>{fmtDay(week.start)} to {fmtDay(week.end)}</span>
+            <b>{nameOfPeriod(idx, week)}</b>
+            <span className="sr-only" data-testid={`${w_}-dates`}>{fmtDay(week.start)} to {fmtDay(week.end)}</span>
+            <label className="flex items-center gap-1.5 text-xs font-semibold text-muted">Start date
+              <input type="date" aria-label={`${W} start date`} className="focus-ring rounded-lg border border-line bg-surface px-2 py-1 text-sm text-ink" value={week.start}
+                onChange={(e) => e.target.value && setDates({ start: e.target.value, end: e.target.value > week.end ? e.target.value : week.end })} />
+            </label>
+            <label className="flex items-center gap-1.5 text-xs font-semibold text-muted">End date
+              <input type="date" aria-label={`${W} end date`} min={week.start} className="focus-ring rounded-lg border border-line bg-surface px-2 py-1 text-sm text-ink" value={week.end}
+                onChange={(e) => e.target.value && setDates({ start: week.start, end: e.target.value < week.start ? week.start : e.target.value })} />
+            </label>
             <span className="ml-auto flex flex-wrap gap-2">
               <Btn tone="ghost" className="border border-line bg-surface" onClick={() => setDates(period === 'week' ? monFri(week.start) : monthOf(week.start))}><Wand2 size={13} /> {period === 'week' ? 'Mon to Fri' : 'Whole month'}</Btn>
-              <Btn tone="ghost" className="border border-line bg-surface" onClick={() => setPicking((v) => !v)}><CalendarDays size={13} /> {picking ? 'Close calendar' : 'Change days'}</Btn>
               <Btn tone="ghost" className="text-coral-ink" onClick={() => { if (window.confirm(`Remove ${nameOfPeriod(idx, week)} and its targets?`) && safe(() => api.remove(week.start))) toast({ title: `${W} removed`, tone: 'info' }); }}><Trash2 size={13} /> Remove</Btn>
             </span>
           </div>
-          <AnimatePresence>
-            {picking && (
-              <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }} className="overflow-hidden">
-                <RangePicker value={week} taken={weeks.filter((w) => w.start !== week.start)} onPick={setDates} />
-              </motion.div>
-            )}
-          </AnimatePresence>
           <WeekPlanTable key={period + week.start} p={p} api={api} period={period} ws={week.start} title={nameOfPeriod(idx, week)} prevTitle={idx > 0 ? nameOfPeriod(idx - 1, weeks[idx - 1]) : undefined} prev={weeks[idx - 1]?.start}
             onSave={(counts, rows, off) => safe(() => api.save(week.start, counts, rows, off))} />
         </div>
@@ -211,7 +211,7 @@ function WeekPlanTable({ p, api, period, ws, title, prevTitle, prev, onSave }: {
   const save = () => {
     if (!edit) return;
     const c: Counts = {};
-    for (const m of metrics) { const v = Number(edit.c[m.id] || 0); if (!Number.isFinite(v) || v < 0) { toast({ title: `${m.label}: type zero or more`, tone: 'error' }); return; } c[m.id] = Math.round(v); }
+    for (const m of metrics) { const v = Number(edit.c[m.id] || 0); if (!Number.isFinite(v) || v < 0) { toast({ title: `${m.label}: type zero or more`, tone: 'info' }); return; } c[m.id] = Math.round(v); }
     if (onSave(c, edit.rows, edit.off)) { setEdit(null); toast({ title: `${title} targets saved and locked`, tone: 'success' }); }
   };
   const prefill = () => {

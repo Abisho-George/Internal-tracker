@@ -72,7 +72,7 @@ function LunchSetting({ personId, lunch, onChange }: { personId: string; lunch: 
   const setStart = (start: string) => {
     if (!start) return;
     const s = toMinutes(start);
-    if (s < DAY_START || s + len > DAY_END) { toast({ title: 'Lunch has to be between 10am and 7pm', tone: 'error' }); return; }
+    if (s < DAY_START || s + len > DAY_END) { toast({ title: 'Lunch has to be between 10am and 7pm', tone: 'info' }); return; }
     save({ ...lunch, start, end: clock(s + len) });
   };
   return (
@@ -197,8 +197,8 @@ export function PlanBuilder({ plan, setPlan, extra, setExtra, personId, date }: 
 
   const add = () => {
     const name = customName.trim();
-    if (pid === CUSTOM && !name) { toast({ title: 'Type the project name', tone: 'error' }); return; }
-    if (!mins || mins < 5) { toast({ title: 'Type how long, e.g. 1h 30m', tone: 'error' }); return; }
+    if (pid === CUSTOM && !name) { toast({ title: 'Type the project name', tone: 'info' }); return; }
+    if (!mins || mins < 5) { toast({ title: 'Type how long, e.g. 1h 30m', tone: 'info' }); return; }
     const it = { id: `${lane === 'plan' ? 'pb' : 'xb'}${Date.now().toString(36)}${++seq}`, projectId: pid === CUSTOM ? `${OTHER}${name}` : pid, minutes: mins };
     if (lane === 'plan') commit([...items, it]);
     else commitExtra([...xItems, it]);
