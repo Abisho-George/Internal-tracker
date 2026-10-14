@@ -79,7 +79,7 @@ function RangePicker({ value, onPick, taken }: { value?: CustomWeek; onPick: (w:
  * then plan its targets: the project's numbers plus any extra rows (number, milestone or text). Prefill copies the week before.
  */
 export function WeekManager({ p }: { p: Project }) {
-  const { setWeekDates, removeWeek, saveWeekPlan, setWeekText } = useStore();
+  const { setWeekDates, removeWeek, saveWeekPlan, setWeekText, setWeekOff } = useStore();
   const weeks = sortedWeeks(p);
   const cur = weeks.find((w) => w.start <= day(0) && day(0) <= w.end)?.start ?? weeks[weeks.length - 1]?.start ?? null;
   const [sel, setSel] = useState<string | null>(cur);
@@ -136,7 +136,7 @@ export function WeekManager({ p }: { p: Project }) {
             )}
           </AnimatePresence>
           <WeekPlanTable key={week.start} p={p} ws={week.start} n={idx + 1} prev={weeks[idx - 1]?.start}
-            onSave={(counts, rows) => safe(() => { saveWeekPlan(p.id, week.start, counts); setWeekText(p.id, week.start, rows); })} />
+            onSave={(counts, rows, off) => safe(() => { saveWeekPlan(p.id, week.start, counts); setWeekText(p.id, week.start, rows); setWeekOff(p.id, week.start, off); })} />
         </div>
       )}
     </div>
@@ -144,23 +144,26 @@ export function WeekManager({ p }: { p: Project }) {
 }
 
 /** A week's targets: the project's numbers and any extra rows, read-only until Edit. */
-function WeekPlanTable({ p, ws, n, prev, onSave }: { p: Project; ws: string; n: number; prev?: string; onSave: (c: Counts, rows: TextTarget[]) => boolean }) {
-  const metrics = p.metrics.filter((m) => inPeriod(m, 'week'));
+function WeekPlanTable({ p, ws, n, prev, onSave }: { p: Project; ws: string; n: number; prev?: string; onSave: (c: Counts, rows: TextTarget[], off: string[]) => boolean }) {
+  const allMetrics = p.metrics.filter((m) => inPeriod(m, 'week'));
   const planned = !!p.weekPlans?.[ws];
   const counts = weekTargetFor(p, ws);
   const rows = p.weekText?.[ws] ?? [];
-  const [edit, setEdit] = useState<{ c: Record<string, string>; rows: TextTarget[] } | null>(null);
-  const start = (c: Counts, r: TextTarget[]) => setEdit({ c: Object.fromEntries(metrics.map((m) => [m.id, String(c[m.id] ?? 0)])), rows: r.map((x) => ({ ...x })) });
+  const [edit, setEdit] = useState<{ c: Record<string, string>; rows: TextTarget[]; off: string[] } | null>(null);
+  const off = edit?.off ?? p.weekOff?.[ws] ?? [];
+  const metrics = allMetrics.filter((m) => !off.includes(m.id));
+  const removed = allMetrics.filter((m) => off.includes(m.id));
+  const start = (c: Counts, r: TextTarget[], o: string[] = p.weekOff?.[ws] ?? []) => setEdit({ c: Object.fromEntries(allMetrics.map((m) => [m.id, String(c[m.id] ?? 0)])), rows: r.map((x) => ({ ...x })), off: [...o] });
   const updRow = (id: string, patch: Partial<TextTarget>) => setEdit((e) => e && { ...e, rows: e.rows.map((r) => (r.id === id ? { ...r, ...patch } : r)) });
   const save = () => {
     if (!edit) return;
     const c: Counts = {};
     for (const m of metrics) { const v = Number(edit.c[m.id] || 0); if (!Number.isFinite(v) || v < 0) { toast({ title: `${m.label}: type zero or more`, tone: 'error' }); return; } c[m.id] = Math.round(v); }
-    if (onSave(c, edit.rows)) { setEdit(null); toast({ title: `Week ${n} targets saved and locked`, tone: 'success' }); }
+    if (onSave(c, edit.rows, edit.off)) { setEdit(null); toast({ title: `Week ${n} targets saved and locked`, tone: 'success' }); }
   };
   const prefill = () => {
     if (!prev) return;
-    start(weekTargetFor(p, prev), (p.weekText?.[prev] ?? []).map((r, i) => ({ ...r, id: newRowId(i), actual: undefined, actualNum: undefined, status: undefined })));
+    start(weekTargetFor(p, prev), (p.weekText?.[prev] ?? []).map((r, i) => ({ ...r, id: newRowId(i), actual: undefined, actualNum: undefined, status: undefined })), p.weekOff?.[prev] ?? []);
     toast({ title: `Filled in from week ${n - 1}. Change anything, then Save.`, tone: 'info' });
   };
   const list = edit?.rows ?? rows;
@@ -183,7 +186,7 @@ function WeekPlanTable({ p, ws, n, prev, onSave }: { p: Project; ws: string; n: 
               <td className="px-2 py-1.5"><KindBadge kind="number" /></td>
               <td className="px-2 py-1.5">{edit ? <input aria-label={`${m.label} target`} type="number" min={0} className={cx(field, 'w-28 text-right tabular-nums')} value={edit.c[m.id] ?? ''} onChange={(e) => setEdit({ ...edit, c: { ...edit.c, [m.id]: e.target.value } })} />
                 : <b className="tabular-nums">{counts[m.id] ?? 0}</b>}</td>
-              {edit && <td />}
+              {edit && <td className="py-1.5"><button aria-label={`Remove ${m.label}`} className="rounded p-1 text-muted hover:text-coral-ink" onClick={() => setEdit({ ...edit, off: [...edit.off, m.id] })}><Trash2 size={13} /></button></td>}
             </tr>
           ))}
           {list.map((r) => (
@@ -201,9 +204,15 @@ function WeekPlanTable({ p, ws, n, prev, onSave }: { p: Project; ws: string; n: 
         </tbody>
       </table>
       {edit && (
-        <div className="border-t border-line px-3 py-2">
+        <div className="flex flex-wrap items-center border-t border-line px-3 py-2">
           <button className="flex items-center gap-1 rounded-full border border-line px-3 py-1 text-xs font-semibold text-accent-ink hover:bg-surface-2"
             onClick={() => setEdit({ ...edit, rows: [...edit.rows, { id: newRowId(edit.rows.length), label: '', target: '', kind: 'number' }] })}><Plus size={12} /> Add a target</button>
+          {removed.length > 0 && (
+            <select aria-label="Add back a project number" className="ml-2 rounded-full border border-line bg-surface px-2 py-1 text-xs" value="" onChange={(e) => e.target.value && setEdit({ ...edit, off: edit.off.filter((x) => x !== e.target.value) })}>
+              <option value="">Add back a project number...</option>
+              {removed.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
+            </select>
+          )}
         </div>
       )}
     </div>
@@ -305,6 +314,93 @@ export function WeekFromDaily({ p }: { p: Project }) {
           ))}
         </ul>
       )}
+    </div>
+  );
+}
+
+/**
+ * This week's numbers, kept simple: pick a week and the targets set for it appear. Fill in what was achieved, then Lock.
+ * Number fields start from what the team's daily updates already counted this week.
+ */
+export function WeekNumbersSimple({ p, canEdit, auto }: { p: Project; canEdit: boolean; auto: Counts }) {
+  const saveWeekActuals = useStore((s) => s.saveWeekActuals);
+  const weeks = sortedWeeks(p);
+  const curStart = weeks.find((w) => w.start <= day(0) && day(0) <= w.end)?.start ?? weeks[weeks.length - 1]?.start;
+  const [sel, setSel] = useState<string | undefined>(curStart);
+  const idx = weeks.findIndex((w) => w.start === sel);
+  const week = weeks[idx];
+  const isCurrent = !!week && week.start <= day(0) && day(0) <= week.end;
+  const off = (week && p.weekOff?.[week.start]) || [];
+  const metrics = p.metrics.filter((m) => inPeriod(m, 'week') && !off.includes(m.id));
+  const target = week ? weekTargetFor(p, week.start) : {};
+  const savedM = (week && p.weekActuals?.[week.start]) || {};
+  const rows = (week && p.weekText?.[week.start]) || [];
+  const lockedAt = week ? p.weekDoneAt?.[week.start] : undefined;
+  const [draft, setDraft] = useState<{ m: Record<string, string>; rows: TextTarget[] } | null>(null);
+  useEffect(() => { setDraft(null); }, [sel]);
+  const editing = canEdit && (!!draft || !lockedAt);
+  const startVal = (id: string) => String(savedM[id] ?? (isCurrent ? auto[id] ?? 0 : 0));
+  const d = draft ?? { m: Object.fromEntries(metrics.map((m) => [m.id, startVal(m.id)])), rows: rows.map((r) => ({ ...r })) };
+  const set = (patch: Partial<typeof d>) => setDraft({ ...d, ...patch });
+  const updRow = (id: string, patch: Partial<TextTarget>) => set({ rows: d.rows.map((r) => (r.id === id ? { ...r, ...patch } : r)) });
+  const save = (lock: boolean) => {
+    if (!week) return;
+    const m: Counts = {};
+    metrics.forEach((x) => { m[x.id] = Math.max(0, Math.round(+d.m[x.id] || 0)); });
+    if (safe(() => saveWeekActuals(p.id, week.start, m, d.rows, lock))) { setDraft(null); toast({ title: lock ? `Week ${idx + 1} numbers locked 🔒` : 'Saved', tone: 'success' }); }
+  };
+  if (!weeks.length) return <p className="rounded-xl border border-dashed border-line p-4 text-sm text-muted">No weeks set yet. Add weeks and their targets in the Targets tab first.</p>;
+  const num = 'focus-ring w-24 rounded-lg border border-line bg-surface px-2 py-1 text-right text-sm tabular-nums text-ink';
+  return (
+    <div className="space-y-4" data-testid="week-numbers-simple">
+      <div className="flex flex-wrap items-center gap-2">
+        <select aria-label="Week" className="focus-ring rounded-xl border border-line bg-surface px-3 py-2 text-sm font-semibold text-ink" value={sel} onChange={(e) => setSel(e.target.value)}>
+          {weeks.map((w, i) => <option key={w.start} value={w.start}>Week {i + 1} · {fmtDay(w.start)} to {fmtDay(w.end)}{w.start <= day(0) && day(0) <= w.end ? ' (this week)' : ''}</option>)}
+        </select>
+        {lockedAt && !draft ? <Chip tone="mint"><Lock size={11} /> Locked {new Date(lockedAt).toLocaleString([], { weekday: 'short', hour: '2-digit', minute: '2-digit' })}</Chip> : <Chip tone="butter"><Pencil size={11} /> Open</Chip>}
+        <span className="ml-auto flex gap-2">
+          {canEdit && lockedAt && !draft && <Btn tone="ghost" className="border border-line" onClick={() => setDraft({ m: Object.fromEntries(metrics.map((m) => [m.id, startVal(m.id)])), rows: rows.map((r) => ({ ...r })) })}><Pencil size={13} /> Edit</Btn>}
+          {editing && <><Btn tone="ghost" className="border border-line" onClick={() => save(false)}>Save</Btn><Btn onClick={() => save(true)}><Lock size={13} /> Lock</Btn></>}
+        </span>
+      </div>
+      {metrics.length + d.rows.length === 0 ? <p className="text-sm text-muted">No targets for this week. Set them in the Targets tab.</p> : (
+        <table className="w-full text-sm" aria-label="This week's numbers">
+          <thead><tr className="border-b border-line text-left text-[11px] font-semibold uppercase tracking-wide text-muted"><th className="py-1.5">Target</th><th className="py-1.5">Goal</th><th className="py-1.5">Achieved</th><th className="w-40 py-1.5" /></tr></thead>
+          <tbody>
+            {metrics.map((m) => {
+              const t = target[m.id] ?? 0;
+              const v = +d.m[m.id] || 0;
+              return (
+                <tr key={m.id} className="border-b border-line/70" data-number-row={m.label}>
+                  <td className="py-2 font-medium">{m.label}</td>
+                  <td className="py-2 tabular-nums text-muted">{t}</td>
+                  <td className="py-2">{editing ? <input aria-label={`${m.label} achieved`} type="number" min={0} className={num} value={d.m[m.id] ?? ''} onChange={(e) => set({ m: { ...d.m, [m.id]: e.target.value } })} /> : <b className="tabular-nums">{v}</b>}</td>
+                  <td className="py-2"><span className="flex items-center gap-2"><Bar value={v} max={t} tone={t && v >= t ? 'mint' : 'sky'} /><span className="w-10 text-right text-xs tabular-nums text-muted">{t ? `${Math.round((v / t) * 100)}%` : ''}</span></span></td>
+                </tr>
+              );
+            })}
+            {d.rows.map((r) => {
+              const k = kindOf(r);
+              return (
+                <tr key={r.id} className="border-b border-line/70" data-text-target={r.id}>
+                  <td className="py-2 font-medium">{r.label}</td>
+                  <td className="py-2 text-muted">{k === 'number' ? <span className="tabular-nums">{r.targetNum ?? 0}</span> : r.target || '·'}</td>
+                  <td className="py-2" colSpan={k === 'number' ? 1 : 2}>
+                    {k === 'number'
+                      ? (editing ? <input aria-label={`${r.label} achieved`} type="number" min={0} className={num} value={r.actualNum ?? ''} onChange={(e) => updRow(r.id, { actualNum: e.target.value === '' ? undefined : Math.max(0, Math.round(+e.target.value)) })} /> : <b className="tabular-nums">{r.actualNum ?? 0}</b>)
+                      : k === 'milestone'
+                        ? (editing ? <select aria-label={`${r.label} status`} className="focus-ring rounded-lg border border-line bg-surface px-2 py-1 text-sm" value={r.status ?? 'Not started'} onChange={(e) => updRow(r.id, { status: e.target.value })}>{MILESTONE_STATUS.map((st) => <option key={st}>{st}</option>)}</select>
+                          : <Chip tone={r.status === 'Completed' ? 'mint' : r.status === 'Blocked' ? 'coral' : r.status === 'In progress' ? 'sky' : 'grey'}>{r.status ?? 'Not started'}</Chip>)
+                        : (editing ? <input aria-label={`${r.label} achieved`} className={field} value={r.actual ?? ''} placeholder="What happened" onChange={(e) => updRow(r.id, { actual: e.target.value })} /> : <span>{r.actual || '·'}</span>)}
+                  </td>
+                  {k === 'number' && <td className="py-2"><span className="flex items-center gap-2"><Bar value={r.actualNum ?? 0} max={r.targetNum ?? 0} tone={r.targetNum && (r.actualNum ?? 0) >= r.targetNum ? 'mint' : 'sky'} /><span className="w-10 text-right text-xs tabular-nums text-muted">{r.targetNum ? `${Math.round(((r.actualNum ?? 0) / r.targetNum) * 100)}%` : ''}</span></span></td>}
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      )}
+      {editing && isCurrent && <p className="text-xs text-muted">Numbers start from what the team's daily updates and submitted tasks counted this week. Change anything, then Lock.</p>}
     </div>
   );
 }

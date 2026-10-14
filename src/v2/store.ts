@@ -211,6 +211,10 @@ interface Actions {
   /** Add a week (oldStart null) or change a week's dates; its plan and written targets move with it. */
   setWeekDates: (projectId: string, oldStart: string | null, week: CustomWeek) => void;
   removeWeek: (projectId: string, start: string) => void;
+  /** Which project numbers are off this week's targets. */
+  setWeekOff: (projectId: string, weekStart: string, metricIds: string[]) => void;
+  /** Save (and optionally lock) a week's achieved numbers and the other targets' actuals. */
+  saveWeekActuals: (projectId: string, weekStart: string, metrics: Counts, rows: TextTarget[], lock: boolean) => void;
   // Custom standard tasks (owner / admins). addCustomStandard returns the new id.
   addCustomStandard: (projectId: string, s: { name: string; unit: string; minutes: number }) => string;
   removeCustomStandard: (projectId: string, id: string) => void;
@@ -1088,6 +1092,19 @@ export const useStore = create<Data & Actions>()(
           });
           proj(pid, (x) => ({ ...x, customWeeks: sorted }));
         },
+        setWeekOff: (pid, ws, ids) => {
+          owns(pid);
+          proj(pid, (x) => ({ ...x, weekOff: { ...x.weekOff, [ws]: ids } }));
+        },
+        saveWeekActuals: (pid, ws, metrics, rows, lock) => {
+          owns(pid);
+          if (Object.values(metrics).some((v) => !Number.isFinite(v) || v < 0)) throw new Error('Numbers must be zero or more.');
+          proj(pid, (x) => {
+            const weekDoneAt = { ...x.weekDoneAt };
+            if (lock) weekDoneAt[ws] = iso(); else delete weekDoneAt[ws];
+            return { ...x, weekActuals: { ...x.weekActuals, [ws]: metrics }, weekText: { ...x.weekText, [ws]: rows }, weekDoneAt };
+          });
+        },
         setWeekText: (pid, ws, rows) => {
           owns(pid);
           const clean = rows.map((r) => ({ ...r, label: r.label.trim(), target: (r.target ?? '').trim() })).filter((r) => r.label || r.target || r.targetNum != null);
@@ -1168,7 +1185,7 @@ export const useStore = create<Data & Actions>()(
     },
     {
       name: 'ls-tracker-v2',
-      version: 16,
+      version: 17,
       // Old or unreadable saved data falls back to a fresh demo instead of crashing.
       migrate: () => seed() as never,
       merge: (persisted, current) => {

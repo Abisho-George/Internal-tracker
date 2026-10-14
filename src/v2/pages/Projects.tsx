@@ -6,7 +6,7 @@ import { projectEodStatus } from '../analytics';
 import { first, nameOf, projectCounts, useStore } from '../store';
 import { Avatar, Btn, Card, Chip, PROJECT_COLORS, cx, input, safe } from '../ui';
 import { ProjectSetup } from './ProjectSetup';
-import { WeekExtraActuals, WeekFromDaily, WeekManager } from './WeekSetup';
+import { WeekManager, WeekNumbersSimple } from './WeekSetup';
 import { Timeline } from './Timeline';
 import { ProgressTrack, ProjectBlock, TargetsTable, progressTone, weekOptions } from './Widgets';
 
@@ -205,7 +205,14 @@ function MetricManager({ p }: { p: Project }) {
  * by default. Each day finalises when end-of-day updates are sent. The owner, admins and management can press Edit
  * to correct a number; Save finalises today again.
  */
-function WeekNumbers({ p, canEdit }: { p: Project; canEdit: boolean }) {
+/** This week's numbers: pick a week, fill in what was achieved against its targets, lock it. */
+function WeekNumbersTab({ p, canEdit }: { p: Project; canEdit: boolean }) {
+  const { tasks, daily } = useStore();
+  const { counts } = projectCounts(p, tasks, daily, { kind: 'week', key: weekStart(0) });
+  return <WeekNumbersSimple p={p} canEdit={canEdit} auto={counts} />;
+}
+
+export function WeekNumbers({ p, canEdit }: { p: Project; canEdit: boolean }) {
   const { tasks, daily, setWeekValues, finalizeDay } = useStore();
   const ws = weekStart(0);
   const today = day(0);
@@ -266,8 +273,6 @@ function WeekNumbers({ p, canEdit }: { p: Project; canEdit: boolean }) {
       </div>
       {err && <p role="alert" className="text-sm font-semibold text-coral-ink">{err}</p>}
 
-      <WeekFromDaily p={p} />
-      <WeekExtraActuals p={p} canEdit={canEdit} />
 
       <div>
         {draftTarget && target && <p className="mb-2"><Chip tone="butter">Draft target</Chip></p>}
@@ -469,7 +474,7 @@ export function ProjectCard({ p, color }: { p: Project; color: string }) {
           <div className="grid gap-4 lg:grid-cols-2"><TargetEditor p={p} period="week" /><TargetEditor p={p} period="month" /></div>
           <MetricManager p={p} />
         </>}
-        {active === 'numbers' && <WeekNumbers p={p} canEdit={manage} />}
+        {active === 'numbers' && <WeekNumbersTab p={p} canEdit={manage} />}
         {active === 'meetings' && <Meetings p={p} canEdit={manage} />}
       </div>
       {manage && <ProjectSetup open={editOpen} onClose={() => setEditOpen(false)} edit={p} />}
