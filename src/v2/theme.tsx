@@ -1,3 +1,4 @@
+import { QUOTE_KIND_LABEL, QUOTES, type QuoteKind } from './quotes';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Check, X } from 'lucide-react';
 import { Modal } from '@/components';
@@ -144,7 +145,7 @@ export function ThemeMenu({ open, onClose }: { open: boolean; onClose: () => voi
   );
 }
 
-type MascotLine = { kind: 'sarcastic' | 'motivation'; text: string };
+type MascotLine = { kind: 'sarcastic' | 'motivation' | QuoteKind; text: string; by?: string };
 
 /** Office-safe, always-available sarcasm. Context-aware quips are added in front of these. */
 const QUIPS = [
@@ -223,13 +224,14 @@ export function Mascot() {
     return { quips: [...q, ...QUIPS], boosts: [...m, ...MOTIVATION] };
   }, [open, d, hour, weekday, name, lead, teamNoTargets]);
 
-  // Alternates: sarcastic, motivation, sarcastic, motivation... Each list cycles in order, context lines first.
+  // Mostly wisdom from great people (motivation, life lessons, philosophy, power quotes), with a cheeky line or a nudge now and then.
   const next = (): MascotLine => {
     const t = turn.current;
-    const motivate = t.said % 2 === 1;
+    const step = t.said % 4;
     t.said += 1;
-    if (motivate) return { kind: 'motivation', text: boosts[t.boost++ % boosts.length] };
-    return { kind: 'sarcastic', text: quips[t.quip++ % quips.length] };
+    if (step === 3) return t.quip++ % 2 === 0 ? { kind: 'sarcastic', text: quips[Math.floor(t.quip / 2) % quips.length] } : { kind: 'motivation', text: boosts[t.boost++ % boosts.length] };
+    const pick = QUOTES[(Math.floor(Math.random() * QUOTES.length) + t.said * 7) % QUOTES.length];
+    return { kind: pick.kind, text: pick.text, by: pick.by };
   };
   const speak = () => { setN((x) => x + 1); setLine(next()); };
   const speakRef = useRef(speak);
@@ -249,13 +251,13 @@ export function Mascot() {
   if (!mascot) return null;
   return (
     <div className="pointer-events-none fixed bottom-4 left-[84px] z-30 flex items-end gap-2 sm:left-[92px]">
-      <button aria-label="Mascot: click for a sarcastic quip or some motivation" data-testid="mascot" onClick={speak} className="focus-ring ls-bob pointer-events-auto shrink-0 rounded-full">
+      <button aria-label="Mascot: click for a quote, a life lesson or some motivation" data-testid="mascot" onClick={speak} className="focus-ring ls-bob pointer-events-auto shrink-0 rounded-full">
         <img src="./mascot.webp" alt="Lead Strategus knight mascot" className="h-16 w-16 object-contain drop-shadow-lg sm:h-24 sm:w-24" />
       </button>
       {line && (
         <div key={n} role="status" data-testid="mascot-line" data-kind={line.kind} className="ls-pop pointer-events-auto relative mb-10 max-w-[min(20rem,calc(100vw-12rem))] rounded-2xl border-2 border-ink bg-surface px-4 py-3 text-sm font-semibold shadow-lift sm:mb-14">
-          <span className="mb-0.5 block text-[10px] font-bold uppercase tracking-wide text-muted">{line.kind === 'motivation' ? 'Real talk' : 'Sarcasm mode'}</span>
-          {line.text}
+          <span className="mb-0.5 block text-[10px] font-bold uppercase tracking-wide text-muted">{line.by ? QUOTE_KIND_LABEL[line.kind as QuoteKind] : line.kind === 'motivation' ? 'Real talk' : 'Sarcasm mode'}</span>
+          {line.by ? <><span className="italic">“{line.text}”</span><span className="mt-1 block text-xs font-bold text-accent-ink">{line.by}</span></> : line.text}
           <button aria-label="Dismiss" className="absolute -right-2 -top-2 rounded-full border border-line bg-surface p-0.5" onClick={() => setLine(null)}><X size={12} /></button>
         </div>
       )}

@@ -383,7 +383,9 @@ export function TaskRow({ task }: { task: Task }) {
 export function ReviewRow({ task, projectName }: { task: Task; projectName: string }) {
   const { approve, approvePart, sendBack, forwardReview } = useStore();
   const options = useReviewerOptions(task.projectId).filter((o) => o.id !== task.assigneeId);
-  const [mode, setMode] = useState<null | 'feedback' | 'forward' | 'part'>(null);
+  const [mode, setMode] = useState<null | 'feedback' | 'forward'>(null);
+  const [approveOpen, setApproveOpen] = useState(false);
+  const [approveHow, setApproveHow] = useState<'all' | 'part'>('all');
   const [partQty, setPartQty] = useState('');
   const [fb, setFb] = useState('');
   const [to, setTo] = useState(options[0]?.id ?? '');
@@ -412,9 +414,11 @@ export function ReviewRow({ task, projectName }: { task: Task; projectName: stri
           <HistoryToggle task={task} open={showHistory} onClick={() => setShowHistory((v) => !v)} className="mt-0.5" />
         </div>
         <PaceChip task={task} />
-        <Btn onClick={() => safe(() => { approve(task.id); toast({ title: `Approved, ${first(task.assigneeId)} notified`, tone: 'success' }); })}><Check size={13} /> Approve</Btn>
+        <Btn onClick={() => {
+          if (task.adhoc || task.qty <= 1) { safe(() => { approve(task.id); toast({ title: `Approved, ${first(task.assigneeId)} notified`, tone: 'success' }); }); return; }
+          setPartQty(''); setFb(''); setApproveHow('all'); setApproveOpen(true);
+        }}><Check size={13} /> Approve</Btn>
         <Btn tone="ghost" className="border border-line" onClick={() => setMode(mode === 'feedback' ? null : 'feedback')}><MessageSquare size={13} /> Feedback</Btn>
-        {!task.adhoc && task.qty > 1 && <Btn tone="ghost" className="border border-line" onClick={() => { setPartQty(''); setMode(mode === 'part' ? null : 'part'); }}><CheckCheck size={13} /> Approve part</Btn>}
         <Btn tone="ghost" className="border border-line" onClick={() => setMode(mode === 'forward' ? null : 'forward')}><Forward size={13} /> Forward</Btn>
       </div>
       {showHistory && <HistoryTimeline task={task} className="mt-2 sm:ml-10" />}
@@ -427,22 +431,37 @@ export function ReviewRow({ task, projectName }: { task: Task; projectName: stri
           <Btn type="submit">Send</Btn>
         </form>
       )}
-      {mode === 'part' && (
-        <form className="mt-2 flex flex-wrap items-end gap-2 rounded-xl bg-surface-2/60 p-3 sm:ml-10" data-testid="approve-part" onSubmit={(e) => {
-          e.preventDefault();
-          const n = Math.round(+partQty);
-          if (safe(() => approvePart(task.id, n, fb))) { toast({ title: `Approved ${n}, ${task.qty - n} sent back to ${first(task.assigneeId)}`, tone: 'success' }); setFb(''); setMode(null); }
-        }}>
-          <label className="text-xs font-semibold text-muted">Approve how many?
-            <span className="mt-1 flex items-center gap-1.5"><input aria-label="Approved quantity" type="number" min={1} max={task.qty - 1} autoFocus className={cx(input, 'w-24 text-right')} value={partQty} onChange={(e) => setPartQty(e.target.value)} placeholder={String(Math.floor(task.qty / 2))} />
-            <span className="text-sm text-ink">of {task.qty} {task.unit}</span></span>
-          </label>
-          <label className="min-w-[14rem] flex-1 text-xs font-semibold text-muted">What needs rework for the rest?
-            <input aria-label="Rework note" className={cx(input, 'mt-1')} placeholder="e.g. Wrong persona on 10 of them, redo with the CFO angle" value={fb} onChange={(e) => setFb(e.target.value)} />
-          </label>
-          <Btn type="submit"><Check size={13} /> {+partQty > 0 && +partQty < task.qty ? `Approve ${Math.round(+partQty)}, send back ${task.qty - Math.round(+partQty)}` : 'Approve part'}</Btn>
-        </form>
-      )}
+      <Modal open={approveOpen} onClose={() => setApproveOpen(false)} title="Approve" description={task.title} size="sm">
+        <div className="space-y-3" data-testid="approve-choice">
+          <button className={cx('focus-ring w-full rounded-xl border-2 p-3 text-left transition', approveHow === 'all' ? 'border-accent bg-accent-soft/40' : 'border-line hover:border-accent/50')} onClick={() => setApproveHow('all')}>
+            <p className="flex items-center gap-2 font-semibold"><CheckCheck size={15} className="text-mint-ink" /> Approve all {task.doneQty ?? task.qty} {task.unit}</p>
+            <p className="text-xs text-muted">Everything submitted is good.</p>
+          </button>
+          <button className={cx('focus-ring w-full rounded-xl border-2 p-3 text-left transition', approveHow === 'part' ? 'border-accent bg-accent-soft/40' : 'border-line hover:border-accent/50')} onClick={() => setApproveHow('part')}>
+            <p className="flex items-center gap-2 font-semibold"><Repeat size={15} className="text-butter-ink" /> Approve part</p>
+            <p className="text-xs text-muted">Approve some, send the rest back for rework.</p>
+          </button>
+          {approveHow === 'part' && (
+            <div className="space-y-2 rounded-xl bg-surface-2/60 p-3" data-testid="approve-part">
+              <label className="block text-xs font-semibold text-muted">Approve how many?
+                <span className="mt-1 flex items-center gap-1.5"><input aria-label="Approved quantity" type="number" min={1} max={task.qty - 1} autoFocus className={cx(input, 'w-24 text-right')} value={partQty} onChange={(e) => setPartQty(e.target.value)} placeholder={String(Math.floor(task.qty / 2))} />
+                <span className="text-sm text-ink">of {task.qty} {task.unit}</span></span>
+              </label>
+              <label className="block text-xs font-semibold text-muted">What needs rework for the rest?
+                <input aria-label="Rework note" className={cx(input, 'mt-1')} placeholder="e.g. Wrong persona on 10 of them, redo with the CFO angle" value={fb} onChange={(e) => setFb(e.target.value)} />
+              </label>
+            </div>
+          )}
+          <div className="flex justify-end gap-2 pt-1">
+            <Btn tone="ghost" onClick={() => setApproveOpen(false)}>Cancel</Btn>
+            {approveHow === 'all'
+              ? <Btn onClick={() => { if (safe(() => approve(task.id))) { setApproveOpen(false); toast({ title: `Approved, ${first(task.assigneeId)} notified`, tone: 'success' }); } }}><Check size={13} /> Approve all</Btn>
+              : <Btn onClick={() => { const n = Math.round(+partQty); if (safe(() => approvePart(task.id, n, fb))) { setApproveOpen(false); setFb(''); toast({ title: `Approved ${n}, ${task.qty - n} sent back to ${first(task.assigneeId)}`, tone: 'success' }); } }}>
+                  <Check size={13} /> {+partQty > 0 && +partQty < task.qty ? `Approve ${Math.round(+partQty)}, send back ${task.qty - Math.round(+partQty)}` : 'Approve part'}
+                </Btn>}
+          </div>
+        </div>
+      </Modal>
       {mode === 'forward' && (
         <form className="mt-2 sm:ml-10 grid gap-2 sm:grid-cols-[1fr_1fr_auto]" onSubmit={(e) => {
           e.preventDefault();

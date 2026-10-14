@@ -3,7 +3,7 @@ import { persist } from 'zustand/middleware';
 import {
   addDays, canManage, day, findCustomStandard, isLeadRole, isWorkingDay, nextWorkingDay, pastWorkingDays, PEOPLE, previousWorkingDay, rollPeriods, seedProjects, seedTasks, standardFor, targetFor,
   taskTitle, TASK_TYPES, toMinutes, weekStart, weekStartOf, projectWeekStart, monToFriWeeks, WORK, ZERO, METRICS,
-  type Counts, type CustomStandard, type CustomWeek, type TextTarget, type Metric, type Project, type Task, type TaskEvent,
+  type BinnedPeriod, type Counts, type CustomStandard, type CustomWeek, type TextTarget, type Metric, type Project, type Task, type TaskEvent,
 } from './data';
 import { daySnapshot, weekSnapshot } from './analytics';
 
@@ -213,6 +213,10 @@ interface Actions {
   /** Add a week (oldStart null) or change a week's dates; its plan and written targets move with it. */
   setWeekDates: (projectId: string, oldStart: string | null, week: CustomWeek) => void;
   removeWeek: (projectId: string, start: string) => void;
+  /** Delete a week or month (it goes to the bin with its targets), bring it back, or empty it from the bin. */
+  binPeriod: (projectId: string, period: 'week' | 'month', start: string) => void;
+  restorePeriod: (projectId: string, binId: string) => void;
+  purgePeriod: (projectId: string, binId: string) => void;
   /** Monthly planning in the Targets view (owner or admin). */
   setMonthData: (projectId: string, patch: Partial<Pick<Project, 'customMonths' | 'monthPlans' | 'monthText' | 'monthOff'>>) => void;
   /** Which project numbers are off this week's targets. */
@@ -1108,6 +1112,43 @@ export const useStore = create<Data & Actions>()(
             if (i && sorted[i - 1].end >= w.start) throw new Error('Two weeks overlap. Pick days that are not in another week.');
           });
           proj(pid, (x) => ({ ...x, customWeeks: sorted }));
+        },
+        binPeriod: (pid, period, start) => {
+          owns(pid);
+          proj(pid, (x) => {
+            const wk = period === 'week';
+            const list = (wk ? x.customWeeks : x.customMonths) ?? [];
+            const w = list.find((y) => y.start === start);
+            if (!w) return x;
+            const plans = { ...(wk ? x.weekPlans : x.monthPlans) };
+            const text = { ...(wk ? x.weekText : x.monthText) };
+            const off = { ...(wk ? x.weekOff : x.monthOff) };
+            const item: BinnedPeriod = { id: uid(), period, week: w, plan: plans[start], text: text[start], off: off[start], deletedAt: iso(), by: get().me };
+            delete plans[start]; delete text[start]; delete off[start];
+            const rest = list.filter((y) => y.start !== start);
+            const bin = [item, ...(x.periodBin ?? [])];
+            return wk ? { ...x, customWeeks: rest, weekPlans: plans, weekText: text, weekOff: off, periodBin: bin } : { ...x, customMonths: rest, monthPlans: plans, monthText: text, monthOff: off, periodBin: bin };
+          });
+        },
+        restorePeriod: (pid, binId) => {
+          const p = owns(pid);
+          const item = p.periodBin?.find((b) => b.id === binId);
+          if (!item) throw new Error('That item is no longer in the bin.');
+          const wk = item.period === 'week';
+          const list = (wk ? p.customWeeks : p.customMonths) ?? [];
+          const w = item.week;
+          if (list.some((y) => y.start <= w.end && w.start <= y.end)) throw new Error(`Those days are already used by another ${item.period}. Change or delete it first.`);
+          proj(pid, (x) => {
+            const back = { ...x, periodBin: (x.periodBin ?? []).filter((b) => b.id !== binId) };
+            const put = <T,>(rec: Record<string, T> | undefined, v: T | undefined) => (v === undefined ? rec ?? {} : { ...rec, [w.start]: v });
+            return wk
+              ? { ...back, customWeeks: [...list, w].sort((a, b) => a.start.localeCompare(b.start)), weekPlans: put(x.weekPlans, item.plan), weekText: put(x.weekText, item.text), weekOff: put(x.weekOff, item.off) }
+              : { ...back, customMonths: [...list, w].sort((a, b) => a.start.localeCompare(b.start)), monthPlans: put(x.monthPlans, item.plan), monthText: put(x.monthText, item.text), monthOff: put(x.monthOff, item.off) };
+          });
+        },
+        purgePeriod: (pid, binId) => {
+          owns(pid);
+          proj(pid, (x) => ({ ...x, periodBin: (x.periodBin ?? []).filter((b) => b.id !== binId) }));
         },
         setMonthData: (pid, patch) => {
           owns(pid);

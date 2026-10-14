@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import {  motion } from 'framer-motion';
-import { CalendarDays, CheckSquare, ChevronLeft, ChevronRight, Copy, FileText, Hash, Lock, Pencil, Plus, Trash2, Users, Wand2 } from 'lucide-react';
-import { toast } from '@/components';
+import { CalendarDays, CheckSquare, ChevronLeft, ChevronRight, Copy, FileText, Hash, Lock, Pencil, Plus, Trash2, Undo2, Users, Wand2 } from 'lucide-react';
+import { Modal, toast } from '@/components';
 import { addDays, day, fmtDay, inPeriod, MONTHS, parseDay, PEOPLE, TASK_TYPES, weekStart, weekStartOf, weekTargetFor, type Counts, type CustomWeek, type Project, type TextTarget } from '../data';
 import { first, MILESTONE_STATUS, useStore, type TaskEntry } from '../store';
 import { Bar, Btn, Chip, cx, safe } from '../ui';
@@ -84,7 +84,7 @@ function usePeriodApi(p: Project, period: Period) {
     return {
       list: sortedWeeks(p),
       setDates: (old: string | null, w: CustomWeek) => st.setWeekDates(p.id, old, w),
-      remove: (start: string) => st.removeWeek(p.id, start),
+      remove: (start: string) => st.binPeriod(p.id, 'week', start),
       plan: (ws: string) => weekTargetFor(p, ws),
       planned: (ws: string) => !!p.weekPlans?.[ws],
       text: (ws: string) => p.weekText?.[ws] ?? [],
@@ -106,10 +106,7 @@ function usePeriodApi(p: Project, period: Period) {
       if (others.some((x) => x.start <= w.end && w.start <= x.end)) throw new Error('Those days are already in another month.');
       st.setMonthData(p.id, { customMonths: [...others, w], monthPlans: move(p.monthPlans, old, w.start), monthText: move(p.monthText, old, w.start), monthOff: move(p.monthOff, old, w.start) });
     },
-    remove: (start: string) => {
-      const drop = <T,>(rec?: Record<string, T>) => { const r = { ...rec }; delete r[start]; return r; };
-      st.setMonthData(p.id, { customMonths: list.filter((x) => x.start !== start), monthPlans: drop(p.monthPlans), monthText: drop(p.monthText), monthOff: drop(p.monthOff) });
-    },
+    remove: (start: string) => st.binPeriod(p.id, 'month', start),
     plan: (ws: string) => p.monthPlans?.[ws] ?? p.monthTarget,
     planned: (ws: string) => !!p.monthPlans?.[ws],
     text: (ws: string) => p.monthText?.[ws] ?? [],
@@ -138,6 +135,16 @@ export function WeekManager({ p, period = 'week' }: { p: Project; period?: Perio
   useEffect(() => { if (!sel || !weeks.some((w) => w.start === sel)) setSel(weeks[weeks.length - 1]?.start ?? null); }, [weekKey]); // eslint-disable-line react-hooks/exhaustive-deps
   const idx = weeks.findIndex((w) => w.start === sel);
   const week = weeks[idx];
+  const { restorePeriod, purgePeriod } = useStore();
+  const binned = (p.periodBin ?? []).filter((b) => b.period === period);
+  const [confirmDel, setConfirmDel] = useState(false);
+  const [binOpen, setBinOpen] = useState(false);
+  const [purge, setPurge] = useState<string | null>(null);
+  const doDelete = () => {
+    if (!week) return;
+    const label = nameOfPeriod(idx, week);
+    if (safe(() => api.remove(week.start))) { setConfirmDel(false); toast({ title: `${label} moved to the bin. You can bring it back from Bin.`, tone: 'info' }); }
+  };
 
   const addWeek = () => {
     const last = weeks[weeks.length - 1];
@@ -150,7 +157,14 @@ export function WeekManager({ p, period = 'week' }: { p: Project; period?: Perio
 
   return (
     <div className="rounded-2xl border border-line p-4" data-testid={`${w_}-manager`}>
-      <p className="flex items-center gap-2 font-bold"><CalendarDays size={16} className="text-accent-ink" /> {W}s and targets</p>
+      <div className="flex items-start justify-between gap-2">
+        <p className="flex items-center gap-2 font-bold"><CalendarDays size={16} className="text-accent-ink" /> {W}s and targets</p>
+        <button onClick={() => setBinOpen(true)} data-testid={`${w_}-bin`} title={`Deleted ${w_}s`}
+          className="focus-ring relative flex items-center gap-1.5 rounded-full border border-line px-3 py-1 text-xs font-semibold text-muted hover:bg-surface-2 hover:text-ink">
+          <Trash2 size={13} /> Bin
+          {binned.length > 0 && <span className="rounded-full bg-coral px-1.5 text-[10px] font-bold text-coral-ink">{binned.length}</span>}
+        </button>
+      </div>
       <p className="text-xs text-muted">Add a {w_}, pick its start and end date, then plan its targets. Add the next {w_} whenever you want to plan ahead.</p>
 
       <div className="mt-3 flex flex-wrap items-center gap-1.5" role="tablist" aria-label={`${W}s`}>
@@ -185,13 +199,42 @@ export function WeekManager({ p, period = 'week' }: { p: Project; period?: Perio
             </label>
             <span className="ml-auto flex flex-wrap gap-2">
               <Btn tone="ghost" className="border border-line bg-surface" onClick={() => setDates(period === 'week' ? monFri(week.start) : monthOf(week.start))}><Wand2 size={13} /> {period === 'week' ? 'Mon to Fri' : 'Whole month'}</Btn>
-              <Btn tone="ghost" className="text-coral-ink" onClick={() => { if (window.confirm(`Remove ${nameOfPeriod(idx, week)} and its targets?`) && safe(() => api.remove(week.start))) toast({ title: `${W} removed`, tone: 'info' }); }}><Trash2 size={13} /> Remove</Btn>
+              <Btn tone="ghost" className="text-coral-ink" onClick={() => setConfirmDel(true)}><Trash2 size={13} /> Delete</Btn>
             </span>
           </div>
           <WeekPlanTable key={period + week.start} p={p} api={api} period={period} ws={week.start} title={nameOfPeriod(idx, week)} prevTitle={idx > 0 ? nameOfPeriod(idx - 1, weeks[idx - 1]) : undefined} prev={weeks[idx - 1]?.start}
             onSave={(counts, rows, off) => safe(() => api.save(week.start, counts, rows, off))} />
         </div>
       )}
+      <Modal open={confirmDel} onClose={() => setConfirmDel(false)} title={`Delete ${week ? nameOfPeriod(idx, week) : ''}?`} size="sm"
+        footer={<><Btn tone="ghost" onClick={() => setConfirmDel(false)}>Cancel</Btn><Btn className="!bg-coral-strong !text-white" onClick={doDelete}><Trash2 size={13} /> Yes, delete</Btn></>}>
+        <p className="text-sm" data-testid="confirm-delete">{week && <>{fmtDay(week.start)} to {fmtDay(week.end)} and its targets will move to the bin. You can bring it back from <b>Bin</b> any time.</>}</p>
+      </Modal>
+      <Modal open={binOpen} onClose={() => { setBinOpen(false); setPurge(null); }} title={`Deleted ${w_}s`} description="Bring a deleted one back with its targets" size="md">
+        {binned.length === 0 ? <p className="py-4 text-center text-sm text-muted">The bin is empty.</p> : (
+          <ul className="divide-y divide-line" data-testid="bin-list">
+            {binned.map((b) => (
+              <li key={b.id} className="flex flex-wrap items-center gap-2 py-2.5 text-sm">
+                <span className="min-w-0 flex-1">
+                  <b>{period === 'month' ? `${MONTHS[parseDay(b.week.start).getMonth()]} ${parseDay(b.week.start).getFullYear()}` : `${fmtDay(b.week.start)} to ${fmtDay(b.week.end)}`}</b>
+                  <span className="block text-xs text-muted">{period === 'month' ? `${fmtDay(b.week.start)} to ${fmtDay(b.week.end)} · ` : ''}deleted by {first(b.by)} {new Date(b.deletedAt).toLocaleString([], { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}{b.plan || b.text?.length ? ' · targets kept' : ''}</span>
+                </span>
+                {purge === b.id ? (
+                  <span className="flex items-center gap-2 text-xs"><span className="font-semibold text-coral-ink">Delete for good?</span>
+                    <Btn tone="ghost" onClick={() => setPurge(null)}>No</Btn>
+                    <Btn className="!bg-coral-strong !text-white" onClick={() => { if (safe(() => purgePeriod(p.id, b.id))) { setPurge(null); toast({ title: 'Deleted for good', tone: 'info' }); } }}>Yes</Btn>
+                  </span>
+                ) : (
+                  <span className="flex gap-2">
+                    <Btn tone="soft" onClick={() => { if (safe(() => restorePeriod(p.id, b.id))) { setSel(b.week.start); toast({ title: 'Brought back with its targets', tone: 'success' }); } }}><Undo2 size={13} /> Restore</Btn>
+                    <Btn tone="ghost" className="text-coral-ink" onClick={() => setPurge(b.id)}>Delete for good</Btn>
+                  </span>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
+      </Modal>
     </div>
   );
 }

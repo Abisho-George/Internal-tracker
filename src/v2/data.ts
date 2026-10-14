@@ -191,6 +191,8 @@ export interface TextTarget {
   kind?: 'number' | 'milestone' | 'text'; targetNum?: number; actualNum?: number; status?: string;
 }
 
+export interface BinnedPeriod { id: string; period: 'week' | 'month'; week: CustomWeek; plan?: Counts; text?: TextTarget[]; off?: string[]; deletedAt: string; by: string }
+
 export interface Meeting { id: string; company: string; contact: string; date: string; time: string }
 
 /** A project-specific task with its own standard time, e.g. "LinkedIn connection request", 0.5 min per request. */
@@ -227,6 +229,8 @@ export interface Project {
   monthPlans?: Record<string, Counts>;
   monthText?: Record<string, TextTarget[]>;
   monthOff?: Record<string, string[]>;
+  /** Deleted weeks and months with everything planned for them, so they can be brought back. */
+  periodBin?: BinnedPeriod[];
   /** Project numbers taken off a week's targets, keyed by week start. */
   weekOff?: Record<string, string[]>;
   /** What was achieved on the project's numbers each week (filled in on This week's numbers), keyed by week start. */
