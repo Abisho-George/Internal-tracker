@@ -41,6 +41,8 @@ export interface WeeklyUpdate {
   targetsNote: string; targetsCustom: CustomRow[]; targetsAt?: string; eowNote: string; eowCustom: CustomRow[]; eowAt?: string;
   /** Frozen automatically when the end-of-week update is sent. */
   eowSnapshot?: Snapshot;
+  /** Numbers corrected by hand on the weekly view, keyed by the merged row (project|task|name|type). */
+  overrides?: Record<string, { qty?: number; doneQty?: number }>;
   /** Weekly task rows per project, same shape as the daily update; locked when entriesAt is set. */
   entries?: TaskEntry[];
   entriesAt?: string;
