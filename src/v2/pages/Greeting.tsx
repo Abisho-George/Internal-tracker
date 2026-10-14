@@ -3,7 +3,7 @@ import { AnimatePresence, motion } from 'framer-motion';
 import { Quote, RefreshCw, Smile } from 'lucide-react';
 import { first, useStore } from '../store';
 import { cx } from '../ui';
-import { QUOTE_KIND_LABEL, quoteOfDay } from '../quotes';
+import { quoteOfDay } from '../quotes';
 
 const JOKES = [
   'Why did the SDR bring a ladder? To reach the decision maker. 🪜',
@@ -43,7 +43,6 @@ export function Greeting({ extra }: { extra?: ReactNode }) {
             <motion.div key={`${mode}${shift}`} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }} transition={{ duration: 0.25 }} className="relative min-w-0 flex-1">
               <span className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-wider text-muted">
                 {mode === 'quote' ? 'Quote of the day' : 'Joke of the day'}
-                {mode === 'quote' && <span className="rounded-full bg-accent-soft px-2 py-px text-[9px] text-accent-ink">{QUOTE_KIND_LABEL[q.kind]}</span>}
               </span>
               {mode === 'quote' ? (
                 <>

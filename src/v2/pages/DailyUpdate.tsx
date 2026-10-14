@@ -1,9 +1,10 @@
+import { fmtDay } from '../data';
 import { useEffect, useMemo, useState } from 'react';
 import {  Lock } from 'lucide-react';
 import { toast } from '@/components';
 
 import { dayTime } from '../analytics';
-import {  emptyDaily, useStore, type CustomRow, type DayBlock, type ExtraHours, type ProjectNumbers } from '../store';
+import {  emptyDaily, useStore, type CustomRow, type DayBlock, type ExtraHours, type ProjectNumbers , leaveOn } from '../store';
 import { Btn, Card, cx, input, safe } from '../ui';
 import { colorOf } from './Widgets';
 import { AUTO_METRICS, CustomRows, DateNav, HoursStats, lastWorkingDay, NoteView } from './DailyViews';
@@ -40,8 +41,9 @@ function NumbersGrid({ value, onChange }: { value: ProjectNumbers; onChange: (v:
 }
 
 export default function DailyUpdate() {
-  const { me, tasks, daily, saveDaily } = useStore();
+  const { me, tasks, daily, saveDaily, profiles } = useStore();
   const [date, setDate] = useState(lastWorkingDay);
+  const leaveToday = leaveOn(profiles, me, date);
   const key = `${me}|${date}`;
   const saved = daily[key] ?? emptyDaily();
   const [plan, setPlan] = useState<DayBlock[]>(saved.plan);
@@ -77,6 +79,7 @@ export default function DailyUpdate() {
         </div>
         <DateNav date={date} onChange={setDate} />
       </div>
+      {leaveToday && <div className="flex items-center gap-2 rounded-2xl border border-lavender-strong/40 bg-lavender/40 px-4 py-3 text-sm" data-testid="leave-banner">🌴 <b>{leaveToday.kind === 'half' ? 'Half day leave' : 'On leave'}</b> on {fmtDay(date)}{leaveToday.note ? ` · ${leaveToday.note}` : ''}. Managers see this instead of missing updates.</div>}
 
 
       <section id="plan-your-day" aria-label="Plan your day" className="scroll-mt-20">

@@ -2,7 +2,7 @@ import { useMemo, useState, type ReactNode } from 'react';
 import { MessageSquareText, Moon, Sunrise, CalendarCheck2, CalendarRange } from 'lucide-react';
 import { PEOPLE, weekStartOf } from '../data';
 import { dailyCounts, dayTime, TEAM_IDS, weekTime, weeklyCounts } from '../analytics';
-import { nameOf, useStore } from '../store';
+import { leaveOn, nameOf, useStore } from '../store';
 import { Avatar, Bar, Card, Chip, cx } from '../ui';
 import DayTaskLog, { WeeklyAuto } from './DayTaskLog';
 import { DateNav, dayHhmm, dayRows, hhmm, HoursLine, lastWorkingDay, PendingHint, ReportTable, targetsMet, weekLabel, weekRows, type Hours, type TvRow } from './DailyViews';
@@ -27,12 +27,12 @@ function KpiTile({ icon, label, done, total, active, onClick }: { icon: ReactNod
   );
 }
 
-interface PersonRow { id: string; name: string; title: string; rows: TvRow[]; sent: boolean; targetsAt?: string; sentAt?: string; hours: Hours; note?: string }
+interface PersonRow { id: string; name: string; title: string; rows: TvRow[]; sent: boolean; targetsAt?: string; sentAt?: string; hours: Hours; note?: string; leave?: string }
 
 /** One compact card per person: status, target vs actual table, hours on one line and the note on one line. */
 function PersonCard({ r, view }: { r: PersonRow; view: View }) {
   const met = targetsMet(r.rows);
-  const status = r.sentAt
+  const status = r.leave && !r.sentAt ? <Chip tone="lavender">{r.leave}</Chip> : r.sentAt
     ? <Chip tone="mint">{view === 'daily' ? `End of day sent ${hhmm(r.sentAt)}` : `End of week sent ${dayHhmm(r.sentAt)}`}</Chip>
     : r.targetsAt
       ? <Chip tone="sky">{view === 'daily' ? `Targets set ${hhmm(r.targetsAt)}` : `Targets set ${dayHhmm(r.targetsAt)}`}</Chip>
@@ -62,7 +62,7 @@ function PersonCard({ r, view }: { r: PersonRow; view: View }) {
 
 /** Managers and founders: everyone's targets against their end-of-day (or end-of-week) actuals. */
 export default function TeamDaily() {
-  const { daily, weekly, tasks, projects } = useStore();
+  const { daily, weekly, tasks, projects, profiles } = useStore();
   useStore((s) => s.profiles); // names can change
   const [view, setView] = useState<View>('daily');
   const [date, setDate] = useState(lastWorkingDay);
@@ -76,13 +76,14 @@ export default function TeamDaily() {
     if (view === 'daily') {
       const d = daily[`${id}|${date}`];
       const { rows, sent } = dayRows(tasks, projects, id, date, d);
-      return { id, name: nameOf(id), title: p.title, rows, sent, targetsAt: d?.sodAt, sentAt: d?.eodAt, hours: dayTime(d), note: (sent ? d?.eodNote : d?.sodNote) || d?.sodNote };
+      const lv = leaveOn(profiles, id, date);
+      return { id, name: nameOf(id), title: p.title, rows, sent, targetsAt: d?.sodAt, sentAt: d?.eodAt, hours: dayTime(d), note: (sent ? d?.eodNote : d?.sodNote) || d?.sodNote, leave: lv ? (lv.kind === 'half' ? 'Half day leave' : 'On leave') : undefined };
     }
     const w = weekly[`${id}|${mon}`];
     const { rows, sent } = weekRows(tasks, id, mon, w);
     const wt = weekTime(daily, id, mon);
     return { id, name: nameOf(id), title: p.title, rows, sent, targetsAt: w?.targetsAt, sentAt: w?.eowAt, hours: wt, note: (sent ? w?.eowNote : w?.targetsNote) || w?.targetsNote };
-  }), [team, view, daily, weekly, tasks, projects, date, mon]);
+  }), [profiles, team, view, daily, weekly, tasks, projects, date, mon]);
 
   const dc = dailyCounts({ daily }, date, team);
   const wc = weeklyCounts({ weekly }, mon, team);
@@ -136,7 +137,7 @@ export default function TeamDaily() {
         <div className="space-y-5">
           {shown.map((r) => (
             <div key={r.id} className="space-y-2" data-person-sheet={r.id}>
-              <p className="flex items-center gap-2 font-bold"><Avatar id={r.id} size="sm" />{r.name}<span className="text-xs font-normal text-muted">{r.title}</span></p>
+              <p className="flex items-center gap-2 font-bold"><Avatar id={r.id} size="sm" />{r.name}<span className="text-xs font-normal text-muted">{r.title}</span>{r.leave && <Chip tone="lavender">{r.leave}</Chip>}</p>
               {view === 'daily' ? <DayTaskLog personId={r.id} date={date} readOnly /> : <WeeklyAuto personId={r.id} date={date} readOnly />}
             </div>
           ))}

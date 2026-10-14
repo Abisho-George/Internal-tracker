@@ -29,7 +29,10 @@ export interface Profile {
   theme?: ThemeId; custom?: CustomTheme; mascot?: boolean; fun?: boolean;
   /** Their lunch break (defaults to 1pm to 2pm); locked stops it being changed by accident. */
   lunch?: Lunch;
+  /** Leave days (one entry per day). */
+  leaves?: Leave[];
 }
+export interface Leave { date: string; kind: 'full' | 'half'; note?: string }
 export interface Lunch { start: string; end: string; locked?: boolean }
 
 /** Frozen target vs actual numbers, keyed by row key (task type, L1 variant, custom task, or `row:<label>` free-form rows). */
@@ -149,6 +152,8 @@ export const emptyDaily = (): DailyUpdate => ({ plan: [], sodNote: '', sodTarget
 
 /** Lunch is fixed for everyone, every day. */
 export const LUNCH = { start: '13:00', end: '14:00' };
+/** The leave entry for someone on a date, if they are on leave. */
+export const leaveOn = (profiles: Record<string, Profile>, personId: string, date: string): Leave | undefined => profiles[personId]?.leaves?.find((l) => l.date === date);
 /** Someone's lunch break: their own setting, or the default 1pm to 2pm. */
 export const lunchOf = (profiles: Record<string, Profile>, personId: string): Lunch => profiles[personId]?.lunch ?? LUNCH;
 const hm12 = (t: string) => { const [h, m] = t.split(':').map(Number); return `${h % 12 || 12}${m ? `:${String(m).padStart(2, '0')}` : ''}${h < 12 ? 'am' : 'pm'}`; };
@@ -622,7 +627,12 @@ function seed(): Data {
   );
   return {
     me: 'udhaya',
-    profiles: {},
+    // Sample leave: Udhaya was off one day last week, Sachi has leave coming up, Bharath a half day.
+    profiles: {
+      udhaya: { leaves: [{ date: pastWorkingDays(5, day(0))[4], kind: 'full', note: 'Sick leave' }] },
+      sachi: { leaves: [{ date: nextWorkingDay(addDays(day(0), 2)), kind: 'full', note: 'Family function' }, { date: nextWorkingDay(addDays(day(0), 3)), kind: 'full', note: 'Family function' }] },
+      bharath: { leaves: [{ date: previousWorkingDay(day(0)), kind: 'half', note: 'Doctor appointment' }] },
+    },
     tasks,
     projects,
     notices: [
@@ -1247,7 +1257,7 @@ export const useStore = create<Data & Actions>()(
     },
     {
       name: 'ls-tracker-v2',
-      version: 17,
+      version: 18,
       // Old or unreadable saved data falls back to a fresh demo instead of crashing.
       migrate: () => seed() as never,
       merge: (persisted, current) => {

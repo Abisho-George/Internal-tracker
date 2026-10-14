@@ -3,7 +3,8 @@ import { useNavigate } from 'react-router-dom';
 import { ArrowDown, ArrowUp, ArrowUpDown } from 'lucide-react';
 import { useChartColors } from '@/theme/useChartColors';
 import { KPI_LABEL, KPIS, personSeries, shiftPeriod, TAG_LABEL, teamTable, type Gran, type Kpi, type KpiValues, type TeamRow } from '../analytics';
-import { PEOPLE } from '../data';
+import { day, PEOPLE } from '../data';
+import { LeaveChip } from './LeavePanel';
 import { nameOf } from '../store';
 import { Avatar, Card, Chip, H2, cx } from '../ui';
 import { Sparkline } from './analytics/charts';
@@ -127,7 +128,7 @@ export default function People() {
                     <td className="py-2 pl-1 pr-2">
                       <button type="button" className="focus-ring flex items-center gap-2 rounded-lg text-left" onClick={(e) => { e.stopPropagation(); setOpen(r.personId); }}>
                         <Avatar id={r.personId} size="sm" />
-                        <span><span className="font-semibold">{nameOf(r.personId)}</span><br /><span className="text-xs text-muted">{titleOf(r.personId)}</span></span>
+                        <span><span className="font-semibold">{nameOf(r.personId)}</span> <LeaveChip personId={r.personId} date={day(0)} /><br /><span className="text-xs text-muted">{titleOf(r.personId)}</span></span>
                       </button>
                     </td>
                     {KPIS.map((k) => (

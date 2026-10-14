@@ -3,7 +3,8 @@ import { Link, useParams } from 'react-router-dom';
 import { ArrowLeft, ChevronLeft, ChevronRight } from 'lucide-react';
 import { dayTime, isOnTime, KPI_LABEL, KPIS, teamTable, type Gran } from '../analytics';
 import { day, fmtDay, isWorkingDay, MONTHS, parseDay, PEOPLE, previousWorkingDay, type Task } from '../data';
-import { nameOf, useStore } from '../store';
+import { leaveOn, nameOf, useStore } from '../store';
+import { LeaveChip } from './LeavePanel';
 import { Avatar, Card, Chip, cx, fmtMin, H2, STATUS } from '../ui';
 import { WhereTimeGoes } from './analytics/charts';
 import { GranToggle, KPI_SHORT, KpiValue, usePeriodOptions, useEarliest, useSlice } from './analytics/controls';
@@ -30,7 +31,9 @@ function TaskLine({ t }: { t: Task }) {
 }
 
 /** Month calendar of a person's tasks: click a day to see what was assigned and what was submitted that day. */
-function HistoryCalendar({ tasks }: { tasks: Task[] }) {
+function HistoryCalendar({ tasks, personId }: { tasks: Task[]; personId: string }) {
+  const leaves = useStore((s) => s.profiles[personId]?.leaves ?? []);
+  const leaveOf = (d: string) => leaves.find((l) => l.date === d);
   const [cursor, setCursor] = useState(() => { const d = new Date(); return { y: d.getFullYear(), m: d.getMonth() }; });
   const [picked, setPicked] = useState(isWorkingDay(day(0)) ? day(0) : previousWorkingDay(day(0)));
   const assignedOn = useMemo(() => { const m = new Map<string, Task[]>(); tasks.forEach((t) => m.set(t.date, [...(m.get(t.date) ?? []), t])); return m; }, [tasks]);
@@ -57,17 +60,19 @@ function HistoryCalendar({ tasks }: { tasks: Task[] }) {
             const ns = submittedOn.get(d)?.length ?? 0;
             return (
               <button key={d} data-day={d} onClick={() => setPicked(d)}
-                className={cx('focus-ring flex h-11 flex-col items-center justify-center rounded-lg text-xs font-semibold transition-colors', picked === d ? 'bg-accent text-accent-on' : na || ns ? 'bg-surface-2 hover:bg-accent-soft' : 'text-faint hover:bg-surface-2', d === day(0) && picked !== d && 'ring-1 ring-accent/60')}>
+                title={leaveOf(d) ? (leaveOf(d)!.kind === 'half' ? 'Half day leave' : 'On leave') : undefined}
+                className={cx('focus-ring flex h-11 flex-col items-center justify-center rounded-lg text-xs font-semibold transition-colors', picked === d ? 'bg-accent text-accent-on' : leaveOf(d) ? 'bg-lavender text-lavender-ink hover:bg-lavender/80' : na || ns ? 'bg-surface-2 hover:bg-accent-soft' : 'text-faint hover:bg-surface-2', d === day(0) && picked !== d && 'ring-1 ring-accent/60')}>
                 {parseDay(d).getDate()}
                 {(na > 0 || ns > 0) && <span className="mt-0.5 flex gap-0.5">{na > 0 && <span className={cx('h-1.5 w-1.5 rounded-full', picked === d ? 'bg-white' : 'bg-sky-strong')} />}{ns > 0 && <span className={cx('h-1.5 w-1.5 rounded-full', picked === d ? 'bg-white/70' : 'bg-mint-strong')} />}</span>}
               </button>
             );
           })}
         </div>
-        <p className="mt-2 flex gap-3 text-[11px] text-muted"><span><span className="mr-1 inline-block h-2 w-2 rounded-full bg-sky-strong" />Assigned</span><span><span className="mr-1 inline-block h-2 w-2 rounded-full bg-mint-strong" />Submitted</span></p>
+        <p className="mt-2 flex gap-3 text-[11px] text-muted"><span><span className="mr-1 inline-block h-2 w-2 rounded-full bg-sky-strong" />Assigned</span><span><span className="mr-1 inline-block h-2 w-2 rounded-full bg-mint-strong" />Submitted</span><span><span className="mr-1 inline-block h-2 w-2 rounded bg-lavender" />Leave</span></p>
       </div>
       <div className="space-y-4">
-        <p className="font-bold">{new Date(`${picked}T12:00:00`).toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' })}</p>
+        <p className="flex items-center gap-2 font-bold">{new Date(`${picked}T12:00:00`).toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' })}<LeaveChip personId={personId} date={picked} /></p>
+        {leaveOf(picked) && <p className="rounded-xl bg-lavender/40 px-3 py-2 text-sm" data-testid="leave-note">🌴 {leaveOf(picked)!.kind === 'half' ? 'On half day leave' : 'On leave'} this day{leaveOf(picked)!.note ? `: ${leaveOf(picked)!.note}` : ''}.</p>}
         <div>
           <p className="mb-1 text-xs font-bold uppercase tracking-wide text-muted">Tasks assigned ({a.length})</p>
           {a.length ? <ul data-testid="day-assigned">{a.map((t) => <TaskLine key={t.id} t={t} />)}</ul> : <p className="text-sm text-muted">Nothing assigned for this day.</p>}
@@ -86,7 +91,7 @@ export default function PersonPage() {
   const { id = '' } = useParams();
   const slice = useSlice();
   const earliest = useEarliest();
-  const { tasks, daily } = useStore();
+  const { tasks, daily, profiles } = useStore();
   const person = PEOPLE.find((p) => p.id === id);
   const [gran, setGran] = useState<Gran>('week');
   const options = usePeriodOptions(gran, earliest);
@@ -109,7 +114,7 @@ export default function PersonPage() {
       <div className="flex flex-wrap items-center gap-3">
         <Link to="/people" className="focus-ring flex items-center gap-1 rounded-lg px-2 py-1 text-sm font-semibold text-accent-ink hover:bg-surface-2"><ArrowLeft size={15} /> People</Link>
         <Avatar id={id} size="lg" />
-        <div><h1 className="text-2xl font-bold">{nameOf(id)}</h1><p className="text-sm text-muted">{person.title}</p></div>
+        <div><h1 className="flex items-center gap-2 text-2xl font-bold">{nameOf(id)} <LeaveChip personId={id} date={day(0)} /></h1><p className="text-sm text-muted">{person.title}</p></div>
       </div>
 
       <Card>
@@ -141,7 +146,7 @@ export default function PersonPage() {
 
       <Card>
         <H2>Task history</H2>
-        <HistoryCalendar tasks={mine} />
+        <HistoryCalendar tasks={mine} personId={id} />
       </Card>
 
       <Card>
@@ -165,7 +170,7 @@ export default function PersonPage() {
                 const tm = dayTime(rec);
                 return (
                   <tr key={d} className="border-b border-line/70 last:border-0" data-day-row={d}>
-                    <td className="px-2 py-1.5 font-medium">{['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][parseDay(d).getDay()]} {fmtDay(d)}</td>
+                    <td className="px-2 py-1.5 font-medium">{['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][parseDay(d).getDay()]} {fmtDay(d)} <LeaveChip personId={id} date={d} /></td>
                     <td className="px-2 py-1.5 text-right">{assigned.length}</td>
                     <td className="px-2 py-1.5 text-right">{subm.length}</td>
                     <td className="px-2 py-1.5 text-right">{appr.length}</td>
@@ -173,7 +178,7 @@ export default function PersonPage() {
                     <td className="px-2 py-1.5 text-right text-muted">{tm.plannedMin ? fmtMin(tm.plannedMin) : '·'}</td>
                     <td className="px-2 py-1.5 text-right">{tm.actualMin ? fmtMin(tm.actualMin) : '·'}</td>
                     <td className="px-2 py-1.5 text-right">{tm.extraMin ? fmtMin(tm.extraMin) : '·'}</td>
-                    <td className="px-2 py-1.5">{rec?.eodAt ? <Chip tone="mint">Sent {new Date(rec.eodAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</Chip> : <span className="text-xs text-muted">Not sent</span>}</td>
+                    <td className="px-2 py-1.5">{!rec?.eodAt && leaveOn(profiles, id, d) ? <span className="text-xs font-semibold text-lavender-ink">On leave</span> : rec?.eodAt ? <Chip tone="mint">Sent {new Date(rec.eodAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</Chip> : <span className="text-xs text-muted">Not sent</span>}</td>
                   </tr>
                 );
               })}

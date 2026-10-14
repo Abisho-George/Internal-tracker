@@ -1,3 +1,4 @@
+import { LeavePanel } from './LeavePanel';
 import { useMemo, useRef, useState } from 'react';
 import { Camera, Moon, Sun, Trash2 } from 'lucide-react';
 import { toast } from '@/components';
@@ -56,6 +57,7 @@ export default function Profile() {
   return (
     <div className="space-y-6">
       <h1 className="text-2xl font-bold">Profile</h1>
+      <LeavePanel personId={me} />
 
       <div className="grid gap-6 lg:grid-cols-[1fr_1fr]">
         <Card>
