@@ -123,10 +123,15 @@ export interface DailyUpdate {
   entriesAt?: string;
 }
 /** One task row under a planned project: picked from the list (task type or project standard) or typed in. */
+export type EntryKind = 'number' | 'milestone' | 'text';
+export const MILESTONE_STATUS = ['Not started', 'In progress', 'Completed', 'Blocked'] as const;
+export type MilestoneStatus = (typeof MILESTONE_STATUS)[number];
 export interface TaskEntry {
   id: string; projectId: string; task: string; custom?: string; desc: string; estMin: number; actualMin?: number;
   /** Target quantity and how many got done (left blank on a weekly row, it adds up from that week's daily rows). */
   qty?: number; doneQty?: number;
+  /** What kind of target: a number (default), a milestone with a status, or free text. */
+  kind?: EntryKind; targetText?: string; actualText?: string; status?: MilestoneStatus;
   achieved: string; remarks: string;
 }
 export interface CustomRow { id: string; label: string; qty: number }
@@ -507,6 +512,8 @@ function seedEntries(projects: Project[], daily: Record<string, DailyUpdate>, we
         actualMin: past ? Math.round((est * (0.8 + rnd() * 0.5)) / 5) * 5 : undefined,
         doneQty: past ? Math.min(qty, Math.round(qty * ratio)) : undefined,
         achieved: '', remarks: past ? REMARKS[Math.floor(rnd() * REMARKS.length)] : '',
+        ...(t.custom === 'Client call prep' ? { kind: 'milestone' as const, targetText: 'Prepare agenda and notes', status: past ? ('Completed' as const) : ('In progress' as const) } : {}),
+        ...(t.task === 'model' ? { kind: 'text' as const, targetText: 'Refresh lookalike model', actualText: past ? 'Initial refresh done' : '' } : {}),
       });
     }
     return rows;
@@ -1094,7 +1101,7 @@ export const useStore = create<Data & Actions>()(
     },
     {
       name: 'ls-tracker-v2',
-      version: 11,
+      version: 12,
       // Old or unreadable saved data falls back to a fresh demo instead of crashing.
       migrate: () => seed() as never,
       merge: (persisted, current) => {

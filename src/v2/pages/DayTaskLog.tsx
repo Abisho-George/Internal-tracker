@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
-import { CalendarRange, Check, ClipboardList, Copy, Lock, Pencil, Plus, Save, Trash2, X } from 'lucide-react';
+import { CalendarRange, Check, CheckSquare, ChevronDown, FileText, Hash, ClipboardList, Copy, Lock, Pencil, Plus, Save, Trash2, X } from 'lucide-react';
 import { toast } from '@/components';
 import { addDays, canManage, previousWorkingDay, TASK_TYPES, toMinutes, weekStartOf, type Project } from '../data';
-import { emptyDaily, emptyWeekly, useStore, type DayBlock, type ExtraHours, type TaskEntry } from '../store';
+import { emptyDaily, emptyWeekly, useStore, type DayBlock, type ExtraHours, type TaskEntry, type EntryKind, type MilestoneStatus, MILESTONE_STATUS } from '../store';
 import { Bar, Btn, Card, Chip, cx, fmtMin, safe } from '../ui';
 import { colorOf } from './Widgets';
 import { DurationInput, hhmm } from './DailyViews';
@@ -25,6 +25,29 @@ const blank = (projectId: string): TaskEntry => ({ id: newId(), projectId, task:
 const optionsFor = (p?: Project) => [...TASK_TYPES.map((t) => ({ id: t.id, name: t.name })), ...(p?.customStandards ?? []).map((c) => ({ id: `std:${c.id}`, name: c.name }))];
 export const entryName = (e: TaskEntry, p?: Project) => (e.task === CUSTOM ? e.custom || 'Custom task' : optionsFor(p).find((o) => o.id === e.task)?.name ?? e.task);
 const sameTask = (a: TaskEntry, b: TaskEntry) => a.projectId === b.projectId && a.task === b.task && (a.task !== CUSTOM || (a.custom ?? '').trim().toLowerCase() === (b.custom ?? '').trim().toLowerCase());
+const STATUS_TONE: Record<MilestoneStatus, string> = { 'Not started': '', 'In progress': '!bg-sky/50 !text-sky-ink', Completed: '!bg-mint/60 !text-mint-ink', Blocked: '!bg-coral/60 !text-coral-ink' };
+const KINDS: { id: EntryKind; label: string; icon: typeof Hash; tone: string }[] = [
+  { id: 'number', label: 'Number', icon: Hash, tone: 'bg-sky/60 text-sky-ink' },
+  { id: 'milestone', label: 'Milestone', icon: CheckSquare, tone: 'bg-mint/60 text-mint-ink' },
+  { id: 'text', label: 'Text', icon: FileText, tone: 'bg-lavender/60 text-lavender-ink' },
+];
+/** Number, milestone or text: decides what the target and actual fields are. */
+function TypeSelect({ value, onChange, disabled }: { value: EntryKind; onChange: (v: EntryKind) => void; disabled?: boolean }) {
+  const k = KINDS.find((x) => x.id === value) ?? KINDS[0];
+  const Icon = k.icon;
+  return (
+    <span className={cx('relative flex items-center gap-2 rounded-lg border border-line bg-surface py-1 pl-1 pr-2', disabled && 'border-transparent bg-transparent')}>
+      <span className={cx('grid h-6 w-6 shrink-0 place-items-center rounded-md', k.tone)}><Icon size={13} /></span>
+      <span className="flex-1 text-sm">{k.label}</span>
+      {!disabled && <ChevronDown size={14} className="text-muted" />}
+      {!disabled && (
+        <select aria-label="Type" className="absolute inset-0 cursor-pointer opacity-0" value={value} onChange={(e) => onChange(e.target.value as EntryKind)}>
+          {KINDS.map((x) => <option key={x.id} value={x.id}>{x.label}</option>)}
+        </select>
+      )}
+    </span>
+  );
+}
 const n = (v: string) => (v.trim() === '' ? undefined : Math.max(0, Math.round(+v || 0)));
 
 /** Where a log lives: the day's daily update or the week's weekly update. */
@@ -136,7 +159,7 @@ export default function DayTaskLog({ personId, date, plan, extra, readOnly, kind
   const fillFromPrev = (pid: string) => {
     const from = prev.filter((e) => e.projectId === pid);
     if (!from.length) { toast({ title: `Nothing saved for this project ${kind === 'day' ? 'on the previous day' : 'last week'}`, tone: 'info' }); return; }
-    setRows((r) => [...r.filter((e) => e.projectId !== pid || e.task), ...from.map((e) => ({ ...e, id: newId(), actualMin: undefined, doneQty: undefined, achieved: '', remarks: '' }))]);
+    setRows((r) => [...r.filter((e) => e.projectId !== pid || e.task), ...from.map((e) => ({ ...e, id: newId(), actualMin: undefined, doneQty: undefined, status: undefined, actualText: undefined, achieved: '', remarks: '' }))]);
     toast({ title: `Copied ${from.length} task${from.length > 1 ? 's' : ''} from ${kind === 'day' ? 'the previous day' : 'last week'}`, tone: 'success' });
   };
   const save = (lock: boolean) => safe(() => {
@@ -206,22 +229,25 @@ export default function DayTaskLog({ personId, date, plan, extra, readOnly, kind
                 </details>
               )}
               <div className="overflow-x-auto">
-                <table className="w-full min-w-[920px] text-sm" aria-label={`${name} ${what} tasks`}>
+                <table className="w-full min-w-[1080px] text-sm" aria-label={`${name} ${what} tasks`}>
                   <thead>
-                    <tr className="text-left text-[11px] font-semibold uppercase tracking-wide text-muted">
-                      <th className="w-48 px-2 py-1.5">Task</th><th className="px-2 py-1.5">Description <span className="normal-case">(optional)</span></th>
-                      <th className="w-20 px-2 py-1.5">Target</th><th className="w-24 px-2 py-1.5">Estimated</th><th className="w-24 px-2 py-1.5">Actual</th>
-                      <th className="w-20 px-2 py-1.5">Achieved</th><th className="w-44 px-2 py-1.5">Remarks</th>{edit && <th className="w-8" />}
+                    <tr className="bg-surface-2/40 text-left text-[11px] font-semibold uppercase tracking-wide text-muted">
+                      <th className="w-48 px-3 py-2">Task</th><th className="w-36 px-2 py-2">Type</th>
+                      <th className="w-40 px-2 py-2">Target <span className="font-normal normal-case">({kind === 'week' ? 'this week' : 'today'})</span></th>
+                      <th className="w-40 px-2 py-2">Actual <span className="font-normal normal-case">({kind === 'week' ? 'this week' : 'today'})</span></th>
+                      <th className="w-28 px-2 py-2">Estimated</th><th className="w-28 px-2 py-2">Time taken</th>
+                      <th className="min-w-[11rem] px-2 py-2">Notes <span className="font-normal normal-case">(optional)</span></th>{edit && <th className="w-8" />}
                     </tr>
                   </thead>
                   <tbody>
-                    {mine.length === 0 && <tr><td colSpan={8} className="px-2 py-3 text-xs text-muted">No tasks yet.</td></tr>}
+                    {mine.length === 0 && <tr><td colSpan={8} className="px-3 py-3 text-xs text-muted">No tasks yet.</td></tr>}
                     {mine.map((e) => {
                       const d = done(e);
+                      const k = e.kind ?? 'number';
                       return (
-                        <tr key={e.id} data-entry={e.id} className="border-t border-line align-top">
-                          <td className="px-2 py-1.5">
-                            {!edit ? <span className="font-medium">{entryName(e, project)}</span> : <>
+                        <tr key={e.id} data-entry={e.id} className="border-t border-line align-middle">
+                          <td className="px-3 py-2">
+                            {!edit ? <span className="font-medium">{entryName(e, project)}{e.desc && <span className="block text-xs font-normal text-muted">{e.desc}</span>}</span> : <>
                               <select aria-label="Task" className={field} value={e.task} onChange={(x) => upd(e.id, { task: x.target.value })}>
                                 <option value="">Pick a task</option>
                                 {opts.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
@@ -230,19 +256,28 @@ export default function DayTaskLog({ personId, date, plan, extra, readOnly, kind
                               {e.task === CUSTOM && <input aria-label="Custom task name" autoFocus className={cx(field, 'mt-1')} placeholder="Task name" value={e.custom ?? ''} onChange={(x) => upd(e.id, { custom: x.target.value })} />}
                             </>}
                           </td>
-                          <td className="px-2 py-1.5">{!edit ? <span className="text-muted">{e.desc || '·'}</span>
-                            : <input aria-label="Description" className={field} placeholder="e.g. CFO list" value={e.desc} onChange={(x) => upd(e.id, { desc: x.target.value })} />}</td>
-                          <td className="px-2 py-1.5">{!edit ? <span className="tabular-nums">{e.qty ?? '·'}</span>
-                            : <input aria-label="Target" type="number" min={0} className={num} placeholder="30" value={e.qty ?? ''} onChange={(x) => upd(e.id, { qty: n(x.target.value) })} />}</td>
-                          <td className="px-2 py-1.5">{!edit ? <span className="tabular-nums">{fmtMin(e.estMin)}</span>
-                            : <DurationInput label="Estimated time" className="w-24" placeholder="1h" value={e.estMin || undefined} onChange={(m) => upd(e.id, { estMin: m ?? 0 })} />}</td>
-                          <td className="px-2 py-1.5">{readOnly ? <span className="tabular-nums">{e.actualMin != null ? fmtMin(e.actualMin) : '·'}</span>
-                            : <DurationInput label="Actual time" className="w-24" placeholder="..." value={e.actualMin} onChange={(m) => upd(e.id, { actualMin: m ?? undefined })} />}</td>
-                          <td className="px-2 py-1.5">{readOnly ? <span className="tabular-nums">{d ?? '·'}</span>
-                            : <input aria-label="Achieved" type="number" min={0} className={num} placeholder={kind === 'week' && d != null ? String(d) : '0'} value={e.doneQty ?? ''} onChange={(x) => upd(e.id, { doneQty: n(x.target.value) })} />}</td>
-                          <td className="px-2 py-1.5">{readOnly ? <span>{e.remarks || '·'}</span>
-                            : <input aria-label="Remarks" className={field} placeholder="Anything to note" value={e.remarks} onChange={(x) => upd(e.id, { remarks: x.target.value })} />}</td>
-                          {edit && <td className="py-1.5"><button aria-label="Remove task" className="focus-ring rounded-lg p-1.5 text-muted hover:bg-surface-2 hover:text-coral-ink" onClick={() => setRows((r) => r.filter((y) => y.id !== e.id))}><Trash2 size={14} /></button></td>}
+                          <td className="px-2 py-2"><TypeSelect value={k} disabled={!edit} onChange={(v) => upd(e.id, { kind: v })} /></td>
+                          <td className="px-2 py-2">
+                            {k === 'number'
+                              ? (!edit ? <span className="tabular-nums">{e.qty ?? '·'}</span> : <input aria-label="Target" type="number" min={0} className={cx(field, 'tabular-nums')} placeholder="30" value={e.qty ?? ''} onChange={(x) => upd(e.id, { qty: n(x.target.value) })} />)
+                              : (!edit ? <span>{e.targetText || '·'}</span> : <input aria-label="Target" className={field} placeholder={k === 'milestone' ? 'e.g. Prepare agenda and notes' : 'e.g. Refresh lookalike model'} value={e.targetText ?? ''} onChange={(x) => upd(e.id, { targetText: x.target.value })} />)}
+                          </td>
+                          <td className="px-2 py-2">
+                            {k === 'number'
+                              ? (readOnly ? <span className="tabular-nums">{d ?? '·'}</span> : <input aria-label="Actual" type="number" min={0} className={cx(field, 'tabular-nums')} placeholder={kind === 'week' && d != null ? String(d) : '0'} value={e.doneQty ?? ''} onChange={(x) => upd(e.id, { doneQty: n(x.target.value) })} />)
+                              : k === 'milestone'
+                                ? <select aria-label="Actual" disabled={readOnly} className={cx(field, 'font-medium', STATUS_TONE[e.status ?? 'Not started'])} value={e.status ?? 'Not started'} onChange={(x) => upd(e.id, { status: x.target.value as MilestoneStatus })}>
+                                    {MILESTONE_STATUS.map((st) => <option key={st} value={st}>{st}</option>)}
+                                  </select>
+                                : (readOnly ? <span>{e.actualText || '·'}</span> : <input aria-label="Actual" className={field} placeholder="What got done" value={e.actualText ?? ''} onChange={(x) => upd(e.id, { actualText: x.target.value })} />)}
+                          </td>
+                          <td className="px-2 py-2">{!edit ? <span className="tabular-nums">{fmtMin(e.estMin)}</span>
+                            : <DurationInput label="Estimated time" placeholder="1h" value={e.estMin || undefined} onChange={(m) => upd(e.id, { estMin: m ?? 0 })} />}</td>
+                          <td className="px-2 py-2">{readOnly ? <span className="tabular-nums">{e.actualMin != null ? fmtMin(e.actualMin) : '·'}</span>
+                            : <DurationInput label="Actual time" placeholder="..." value={e.actualMin} onChange={(m) => upd(e.id, { actualMin: m ?? undefined })} />}</td>
+                          <td className="px-2 py-2">{readOnly ? <span>{e.remarks || '·'}</span>
+                            : <input aria-label="Notes" className={field} placeholder="Add note..." value={e.remarks} onChange={(x) => upd(e.id, { remarks: x.target.value })} />}</td>
+                          {edit && <td className="py-2"><button aria-label="Remove task" className="focus-ring rounded-lg p-1.5 text-muted hover:bg-surface-2 hover:text-coral-ink" onClick={() => setRows((r) => r.filter((y) => y.id !== e.id))}><Trash2 size={14} /></button></td>}
                         </tr>
                       );
                     })}
@@ -250,9 +285,9 @@ export default function DayTaskLog({ personId, date, plan, extra, readOnly, kind
                   <tfoot>
                     <tr className="border-t border-line bg-surface-2/40 text-xs font-semibold">
                       <td className="px-2 py-2">{edit && <button className="focus-ring flex items-center gap-1 rounded-full border border-line px-3 py-1 text-accent-ink hover:bg-surface-2" onClick={() => setRows((r) => [...r, blank(pid)])}><Plus size={12} /> Add task</button>}</td>
-                      <td className="px-2 py-2 text-right text-muted" colSpan={2}>Total</td>
+                      <td className="px-2 py-2 text-right text-muted" colSpan={3}>Total</td>
                       <td className="px-2 py-2 tabular-nums" data-testid="est-total">{fmtMin(est)}{planned > 0 && est > planned && <span className="ml-1 text-coral-ink">over plan</span>}</td>
-                      <td className="px-2 py-2 tabular-nums" data-testid="act-total">{fmtMin(act)}</td><td colSpan={3} />
+                      <td className="px-2 py-2 tabular-nums" data-testid="act-total">{fmtMin(act)}</td><td colSpan={2} />
                     </tr>
                   </tfoot>
                 </table>
@@ -298,10 +333,11 @@ export function TargetsProgress({ personId, date, kind }: { personId: string; da
   const { projects, daily, weekly } = useStore();
   const mon = weekStartOf(date);
   const list = (kind === 'day' ? daily[`${personId}|${date}`]?.entries : weekly[`${personId}|${mon}`]?.entries) ?? [];
-  const done = (e: TaskEntry) => (kind === 'week' ? weekDone(e, personId, mon, daily) : e.doneQty) ?? 0;
-  const counted = list.filter((e) => (e.qty ?? 0) > 0);
+  const done = (e: TaskEntry) => ((e.kind ?? 'number') === 'milestone' ? (e.status === 'Completed' ? 1 : 0) : (e.kind ?? 'number') === 'text' ? 0 : (kind === 'week' ? weekDone(e, personId, mon, daily) : e.doneQty) ?? 0);
+  const tgt = (e: TaskEntry) => ((e.kind ?? 'number') === 'milestone' ? 1 : (e.kind ?? 'number') === 'text' ? 0 : e.qty ?? 0);
+  const counted = list.filter((e) => tgt(e) > 0);
   const pids = [...new Set(list.map((e) => e.projectId))];
-  const sum = (xs: TaskEntry[]) => xs.reduce((a, e) => ({ t: a.t + (e.qty ?? 0), d: a.d + Math.min(done(e), e.qty ?? 0) }), { t: 0, d: 0 });
+  const sum = (xs: TaskEntry[]) => xs.reduce((a, e) => ({ t: a.t + tgt(e), d: a.d + Math.min(done(e), tgt(e)) }), { t: 0, d: 0 });
   const total = sum(counted);
   const pct = (d: number, t: number) => (t ? Math.round((d / t) * 100) : 0);
   const tone = (p: number) => (p >= 100 ? 'mint' : p >= 60 ? 'sky' : 'peach');
@@ -322,18 +358,18 @@ export function TargetsProgress({ personId, date, kind }: { personId: string; da
         const p = projects.find((x) => x.id === pid);
         const rows = list.filter((e) => e.projectId === pid);
         const gname = groupName(pid, projects);
-        const s = sum(rows.filter((e) => (e.qty ?? 0) > 0));
+        const s = sum(rows.filter((e) => tgt(e) > 0));
         return (
           <div key={pid} className="rounded-lg bg-surface-2/40 p-2" style={{ borderLeft: `4px solid ${p ? colorOf(projects, pid) : '#64748B'}` }}>
             <p className="mb-1 flex items-center justify-between text-xs font-semibold"><span>{gname}</span><span className="tabular-nums">{s.d}/{s.t} · {pct(s.d, s.t)}%</span></p>
             <ul className="space-y-1">
               {rows.map((e) => {
                 const d = done(e);
-                const t = e.qty ?? 0;
+                const t = tgt(e);
                 return (
                   <li key={e.id} className="grid grid-cols-[minmax(0,1fr)_5rem_minmax(4rem,8rem)_2.5rem] items-center gap-2 text-xs">
                     <span className="truncate" title={e.desc}>{entryName(e, p)}{e.desc && <span className="text-muted"> · {e.desc}</span>}</span>
-                    <span className="text-right font-semibold tabular-nums">{t ? `${d}/${t}` : d || '·'}</span>
+                    <span className="text-right font-semibold tabular-nums">{e.kind === 'milestone' ? (e.status ?? 'Not started') : e.kind === 'text' ? (e.actualText || '·') : t ? `${d}/${t}` : d || '·'}</span>
                     <Bar value={d} max={t} tone={tone(pct(d, t))} />
                     <span className="text-right tabular-nums text-muted">{t ? `${pct(d, t)}%` : ''}</span>
                   </li>
