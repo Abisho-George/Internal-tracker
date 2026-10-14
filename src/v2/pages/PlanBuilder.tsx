@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type DragEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
 import { CalendarClock, Copy, GripVertical, Lock, Plus, Trash2, Unlock, UtensilsCrossed, Wand2 } from 'lucide-react';
 import { toast } from '@/components';
@@ -115,28 +115,43 @@ export function PlanBuilder({ plan, setPlan, extra, personId, date }: { plan: Da
   const [pid, setPid] = useState(active[0]?.id ?? '');
   const [customName, setCustomName] = useState('');
   const [mins, setMins] = useState<number | undefined>(60);
-  const [drag, setDrag] = useState<string | null>(null);
-  const [before, setBefore] = useState<string | null | undefined>(undefined); // undefined = no preview
+  /** The block being dragged: where it was grabbed and where its start sits now, in working minutes (lunch left out). */
+  const [drag, setDrag] = useState<{ id: string; grab: number; work: number; x0: number; moved: boolean } | null>(null);
   const [overTrash, setOverTrash] = useState(false);
   const lineRef = useRef<HTMLDivElement>(null);
-
-  const reorder = (list: PlanItem[], id: string, beforeId: string | null) => {
-    const it = list.find((x) => x.id === id);
-    if (!it) return list;
-    const rest = list.filter((x) => x.id !== id);
-    const at = beforeId ? rest.findIndex((x) => x.id === beforeId) : rest.length;
-    rest.splice(at < 0 ? rest.length : at, 0, it);
-    return rest;
+  const trashRef = useRef<HTMLDivElement>(null);
+  const lunchLen = L1 - L0;
+  // Working time skips lunch: 20 minutes pushed into lunch come out the other side of it.
+  const toWork = (c: number) => (c < L0 ? c - DAY_START : c < L1 ? L0 - DAY_START : c - lunchLen - DAY_START);
+  const fromWork = (w: number) => (DAY_START + w < L0 ? DAY_START + w : DAY_START + w + lunchLen);
+  const segments = (w0: number, w1: number) => {
+    const cut = L0 - DAY_START;
+    if (w1 <= cut || w0 >= cut) return [{ s: fromWork(w0), e: fromWork(w0) + (w1 - w0) }];
+    return [{ s: fromWork(w0), e: L0 }, { s: L1, e: L1 + (w1 - cut) }];
   };
-  // While dragging, show where everything would land: the other blocks slide aside live.
-  const shown = drag && before !== undefined && !overTrash ? reorder(items, drag, before) : items;
-  const laid = useMemo(() => toPlan(shown, lunch), [shown, lunch]);
+
   const committed = useMemo(() => toPlan(items, lunch), [items, lunch]);
   const total = items.reduce((a, i) => a + i.minutes, 0);
   const endAt = committed.length ? toMinutes(committed[committed.length - 1].end) : DAY_START;
   const span = Math.max(DAY_END, endAt) - DAY_START;
   const pct = (m: number) => `${((m - DAY_START) / span) * 100}%`;
   const commit = (next: PlanItem[]) => setPlan(toPlan(next, lunch));
+  const dragItem = drag ? items.find((x) => x.id === drag.id) : undefined;
+
+  // While dragging, the others make room where the block's middle is: they slide aside live.
+  const shown = useMemo(() => {
+    if (!drag || !dragItem || !drag.moved || overTrash) return items;
+    const others = items.filter((x) => x.id !== drag.id);
+    const centre = drag.work + dragItem.minutes / 2;
+    let acc = 0;
+    let at = others.length;
+    for (let i = 0; i < others.length; i++) {
+      if (acc + others[i].minutes / 2 > centre) { at = i; break; }
+      acc += others[i].minutes;
+    }
+    return [...others.slice(0, at), dragItem, ...others.slice(at)];
+  }, [items, drag, dragItem, overTrash]);
+  const laid = useMemo(() => toPlan(shown, lunch), [shown, lunch]);
 
   const add = () => {
     const name = customName.trim();
@@ -152,35 +167,50 @@ export function PlanBuilder({ plan, setPlan, extra, personId, date }: { plan: Da
     commit(toItems(prev).map((x) => ({ ...x, id: `pb${Date.now().toString(36)}${++seq}`, actual: undefined })));
     toast({ title: 'Copied the previous day\'s blocks. Save to keep them.', tone: 'success' });
   };
-  const endDrag = () => { setDrag(null); setBefore(undefined); setOverTrash(false); };
 
-  /** Where the pointer is on the line decides the drop slot, measured against the saved order so nothing jitters. */
-  const slotAt = (clientX: number): string | null => {
-    const r = lineRef.current?.getBoundingClientRect();
-    if (!r || !drag) return null;
-    const minute = DAY_START + ((clientX - r.left) / r.width) * span;
-    const others = items.filter((x) => x.id !== drag);
-    const order = toPlan(items, lunch);
-    for (const it of others) {
-      const parts = order.filter((b) => b.id.split('~')[0] === it.id);
-      const mid = (toMinutes(parts[0].start) + toMinutes(parts[parts.length - 1].end)) / 2;
-      if (minute < mid) return it.id;
-    }
-    return null;
+  const workAt = (clientX: number) => {
+    const r = lineRef.current!.getBoundingClientRect();
+    return toWork(DAY_START + ((clientX - r.left) / r.width) * span);
   };
-  const onLineOver = (e: DragEvent) => {
+  const startDrag = (e: ReactPointerEvent, id: string) => {
+    if (e.button !== 0) return;
     e.preventDefault();
-    e.dataTransfer.dropEffect = 'move';
-    const b = slotAt(e.clientX);
-    if (b !== before) setBefore(b);
-    if (overTrash) setOverTrash(false);
+    const first = committed.find((b) => b.id.split('~')[0] === id);
+    if (!first) return;
+    const start = toWork(toMinutes(first.start));
+    setDrag({ id, grab: workAt(e.clientX) - start, work: start, x0: e.clientX, moved: false });
   };
-  const onLineDrop = (e: DragEvent) => {
-    e.preventDefault();
-    const id = e.dataTransfer.getData('text/plain') || drag;
-    if (id) commit(reorder(items, id, slotAt(e.clientX)));
-    endDrag();
-  };
+  // Follow the pointer anywhere on the page until it is released.
+  const live = useRef({ drag, shown, overTrash });
+  live.current = { drag, shown, overTrash };
+  useEffect(() => {
+    if (!drag) return;
+    const maxWork = Math.max(toWork(DAY_START + span), total);
+    const move = (e: PointerEvent) => {
+      const d = live.current.drag;
+      if (!d) return;
+      const it = items.find((x) => x.id === d.id);
+      if (!it) return;
+      const moved = d.moved || Math.abs(e.clientX - d.x0) > 4;
+      const work = Math.round(Math.max(0, Math.min(maxWork - it.minutes, workAt(e.clientX) - d.grab)) / 5) * 5;
+      const tr = trashRef.current?.getBoundingClientRect();
+      setOverTrash(!!tr && e.clientX >= tr.left && e.clientX <= tr.right && e.clientY >= tr.top && e.clientY <= tr.bottom);
+      setDrag({ ...d, work, moved });
+    };
+    const up = () => {
+      const { drag: d, shown: order, overTrash: trash } = live.current;
+      if (d?.moved) {
+        if (trash) { remove(d.id); toast({ title: 'Block removed', tone: 'info' }); }
+        else commit(order);
+      }
+      setDrag(null);
+      setOverTrash(false);
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up, { once: true });
+    window.addEventListener('pointercancel', up, { once: true });
+    return () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); window.removeEventListener('pointercancel', up); };
+  }, [drag?.id]); // eslint-disable-line react-hooks/exhaustive-deps
   const extraOnLine = extra.filter((x) => x.start && x.end && x.end > x.start);
   const t = reduce ? { duration: 0 } : SPRING;
 
@@ -213,39 +243,48 @@ export function PlanBuilder({ plan, setPlan, extra, personId, date }: { plan: Da
       <LunchSetting personId={personId} lunch={lunch} onChange={setLunch} />
 
       <div>
-        <div ref={lineRef} className={cx('relative h-16 overflow-hidden rounded-2xl bg-surface-2 p-1 transition-shadow', drag && 'shadow-[inset_0_0_0_2px_rgb(var(--accent)/0.35)]')} onDragOver={onLineOver} onDrop={onLineDrop} data-testid="plan-line">
-          <motion.div layout transition={t} className="absolute inset-y-1 flex items-center justify-center rounded-lg bg-grey text-[11px] font-semibold text-grey-ink"
+        <div ref={lineRef} className={cx('relative h-16 touch-none overflow-hidden rounded-2xl bg-surface-2 p-1 transition-shadow', drag?.moved && 'shadow-[inset_0_0_0_2px_rgb(var(--accent)/0.35)]')} data-testid="plan-line">
+          <div className="absolute inset-y-1 z-20 flex items-center justify-center rounded-lg bg-grey/80 text-[11px] font-semibold text-grey-ink backdrop-blur-[1px] transition-all"
             style={{ left: pct(L0), width: `${((L1 - L0) / span) * 100}%`, backgroundImage: 'repeating-linear-gradient(135deg, rgb(0 0 0 / 0.06) 0 6px, transparent 6px 12px)' }}
             title={`Lunch ${lunch.start} to ${lunch.end}${lunch.locked ? ', locked' : ''}`}>
             🍽 {lunch.locked && <Lock size={10} className="ml-0.5" />}
-          </motion.div>
+          </div>
           <AnimatePresence initial={false}>
             {laid.map((b) => {
               const base = b.id.split('~')[0];
               const s = toMinutes(b.start);
               const e = toMinutes(b.end);
-              const dragging = drag === base;
+              const slot = drag?.moved && drag.id === base;
               return (
                 <motion.div key={b.id} data-plan-block={base}
                   initial={reduce ? false : { opacity: 0, scaleY: 0.3, y: 10 }}
-                  animate={{ opacity: dragging ? 0.45 : 1, scaleY: 1, y: 0, left: pct(s), width: `${((e - s) / span) * 100}%` }}
+                  animate={{ opacity: 1, scaleY: 1, y: 0, left: pct(s), width: `${((e - s) / span) * 100}%` }}
                   exit={reduce ? { opacity: 0 } : { opacity: 0, scale: 0.6, y: -14, transition: { duration: 0.22 } }}
                   transition={t}
                   whileHover={drag ? undefined : { y: -2, boxShadow: '0 8px 18px -6px rgb(0 0 0 / 0.35)' }}
-                  className={cx('absolute inset-y-1 cursor-grab overflow-hidden rounded-lg text-[11px] font-semibold text-white active:cursor-grabbing', dragging && 'ring-2 ring-white/80 ring-offset-1')}
-                  style={{ background: colorFor(b.projectId, b.custom, projects), boxShadow: '0 1px 2px rgb(0 0 0 / 0.15)' }}
+                  onPointerDown={(ev) => startDrag(ev, base)}
+                  className={cx('absolute inset-y-1 cursor-grab touch-none select-none overflow-hidden rounded-lg text-[11px] font-semibold text-white', drag && 'cursor-grabbing', slot && '!bg-transparent border-2 border-dashed border-accent/60')}
+                  style={{ background: slot ? undefined : colorFor(b.projectId, b.custom, projects), boxShadow: slot ? 'none' : '0 1px 2px rgb(0 0 0 / 0.15)' }}
                   title={`${nameOf(b.projectId, b.custom, projects)} · ${b.start} to ${b.end} · drag to move`}>
-                  <div draggable className="flex h-full w-full select-none items-center gap-1 truncate px-2"
-                    onDragStart={(ev) => { ev.dataTransfer.setData('text/plain', base); ev.dataTransfer.effectAllowed = 'move'; setDrag(base); }}
-                    onDragEnd={endDrag}>
-                    <GripVertical size={12} className="shrink-0 opacity-70" />
-                    <span className="truncate">{nameOf(b.projectId, b.custom, projects)}</span>
-                    <span className="ml-auto shrink-0 rounded bg-black/15 px-1 tabular-nums">{fmtMin(e - s)}</span>
-                  </div>
+                  {!slot && (
+                    <div className="flex h-full w-full items-center gap-1 truncate px-2">
+                      <GripVertical size={12} className="shrink-0 opacity-70" />
+                      <span className="truncate">{nameOf(b.projectId, b.custom, projects)}</span>
+                      <span className="ml-auto shrink-0 rounded bg-black/15 px-1 tabular-nums">{fmtMin(e - s)}</span>
+                    </div>
+                  )}
                 </motion.div>
               );
             })}
           </AnimatePresence>
+          {/* The block under the pointer: follows it exactly, and splits across lunch as it passes through. */}
+          {drag?.moved && dragItem && segments(drag.work, drag.work + dragItem.minutes).map((g, i) => (
+            <div key={i} data-drag-ghost className={cx('pointer-events-none absolute inset-y-0 z-30 flex items-center gap-1 overflow-hidden truncate rounded-lg px-2 text-[11px] font-semibold text-white shadow-[0_12px_28px_-8px_rgb(0_0_0/0.55)] ring-2 ring-white/90', overTrash && 'opacity-60 saturate-50')}
+              style={{ left: pct(g.s), width: `${((g.e - g.s) / span) * 100}%`, background: colorFor(dragItem.projectId, dragItem.custom, projects), transform: 'translateY(-3px) scale(1.03)' }}>
+              <GripVertical size={12} className="shrink-0 opacity-70" />
+              <span className="truncate">{clock(g.s)} to {clock(g.e)}</span>
+            </div>
+          ))}
           {extraOnLine.map((x) => {
             const a = Math.max(DAY_START, toMinutes(x.start!));
             const z = Math.min(DAY_START + span, toMinutes(x.end!));
@@ -259,14 +298,11 @@ export function PlanBuilder({ plan, setPlan, extra, personId, date }: { plan: Da
           <span>Planned <b className="text-ink">{fmtMin(total)}</b>{endAt > DAY_END && <span className="ml-1 font-semibold text-coral-ink">· runs past 7pm</span>}</span>
           {extraOnLine.length > 0 && <span><span className="mr-1 inline-block h-2 w-3 rounded bg-lavender-strong align-middle" />Extra hours</span>}
           <span>Drag a block along the line to reorder. Lunch stays put and blocks flow around it.</span>
-          <motion.div
-            animate={overTrash ? { scale: 1.12, rotate: [0, -6, 6, -4, 0] } : drag ? { scale: 1.04, rotate: 0 } : { scale: 1, rotate: 0 }}
+          <motion.div ref={trashRef}
+            animate={overTrash ? { scale: 1.12, rotate: [0, -6, 6, -4, 0] } : drag?.moved ? { scale: 1.04, rotate: 0 } : { scale: 1, rotate: 0 }}
             transition={overTrash ? { rotate: { duration: 0.4, repeat: Infinity }, scale: SPRING } : SPRING}
-            onDragOver={(e) => { e.preventDefault(); if (!overTrash) setOverTrash(true); }}
-            onDragLeave={() => setOverTrash(false)}
-            onDrop={(e) => { e.preventDefault(); const id = e.dataTransfer.getData('text/plain') || drag; if (id) { remove(id); toast({ title: 'Block removed', tone: 'info' }); } endDrag(); }}
             data-testid="plan-trash"
-            className={cx('ml-auto flex items-center gap-1.5 rounded-xl border-2 border-dashed px-3 py-2 font-semibold transition-colors', overTrash ? 'border-coral-strong bg-coral text-coral-ink' : drag ? 'border-coral-strong/60 text-coral-ink' : 'border-line')}>
+            className={cx('ml-auto flex items-center gap-1.5 rounded-xl border-2 border-dashed px-3 py-2 font-semibold transition-colors', overTrash ? 'border-coral-strong bg-coral text-coral-ink' : drag?.moved ? 'border-coral-strong/60 text-coral-ink' : 'border-line')}>
             <Trash2 size={14} /> Drop here to delete
           </motion.div>
         </div>
@@ -278,7 +314,7 @@ export function PlanBuilder({ plan, setPlan, extra, personId, date }: { plan: Da
             {shown.map((it, i) => {
               const parts = laid.filter((b) => b.id.split('~')[0] === it.id);
               return (
-                <motion.li key={it.id} layout={!reduce} transition={t} initial={reduce ? false : { opacity: 0, x: -16 }} animate={{ opacity: drag === it.id ? 0.5 : 1, x: 0 }} exit={{ opacity: 0, x: 24, height: 0 }}
+                <motion.li key={it.id} layout={!reduce} transition={t} initial={reduce ? false : { opacity: 0, x: -16 }} animate={{ opacity: drag?.moved && drag.id === it.id ? 0.5 : 1, x: 0 }} exit={{ opacity: 0, x: 24, height: 0 }}
                   className="flex flex-wrap items-center gap-2 bg-surface px-3 py-2 text-sm" data-plan-row={it.id}>
                   <span className="w-5 text-xs font-bold text-muted">{i + 1}</span>
                   <span className="inline-block h-3 w-3 rounded-full" style={{ background: colorFor(it.projectId, it.custom, projects) }} />
