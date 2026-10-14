@@ -211,6 +211,8 @@ interface Actions {
   /** Add a week (oldStart null) or change a week's dates; its plan and written targets move with it. */
   setWeekDates: (projectId: string, oldStart: string | null, week: CustomWeek) => void;
   removeWeek: (projectId: string, start: string) => void;
+  /** Monthly planning in the Targets view (owner or admin). */
+  setMonthData: (projectId: string, patch: Partial<Pick<Project, 'customMonths' | 'monthPlans' | 'monthText' | 'monthOff'>>) => void;
   /** Which project numbers are off this week's targets. */
   setWeekOff: (projectId: string, weekStart: string, metricIds: string[]) => void;
   /** Save (and optionally lock) a week's achieved numbers and the other targets' actuals. */
@@ -1091,6 +1093,10 @@ export const useStore = create<Data & Actions>()(
             if (i && sorted[i - 1].end >= w.start) throw new Error('Two weeks overlap. Pick days that are not in another week.');
           });
           proj(pid, (x) => ({ ...x, customWeeks: sorted }));
+        },
+        setMonthData: (pid, patch) => {
+          owns(pid);
+          proj(pid, (x) => ({ ...x, ...patch }));
         },
         setWeekOff: (pid, ws, ids) => {
           owns(pid);

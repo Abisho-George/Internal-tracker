@@ -222,6 +222,11 @@ export interface Project {
   customWeeks?: CustomWeek[];
   /** Written targets per week, keyed by week start. */
   weekText?: Record<string, TextTarget[]>;
+  /** Months set by hand in the Targets view (Monthly), with their plans, extra targets and numbers taken off, keyed by month start. */
+  customMonths?: CustomWeek[];
+  monthPlans?: Record<string, Counts>;
+  monthText?: Record<string, TextTarget[]>;
+  monthOff?: Record<string, string[]>;
   /** Project numbers taken off a week's targets, keyed by week start. */
   weekOff?: Record<string, string[]>;
   /** What was achieved on the project's numbers each week (filled in on This week's numbers), keyed by week start. */

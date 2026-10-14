@@ -205,6 +205,22 @@ function MetricManager({ p }: { p: Project }) {
  * by default. Each day finalises when end-of-day updates are sent. The owner, admins and management can press Edit
  * to correct a number; Save finalises today again.
  */
+/** Targets view: Weekly or Monthly, planned the same way. */
+function TargetsByPeriod({ p }: { p: Project }) {
+  const [period, setPeriod] = useState<'week' | 'month'>('week');
+  return (
+    <div className="space-y-3">
+      <div className="flex w-fit rounded-full bg-surface-2 p-1" role="tablist" aria-label="Weekly or monthly targets">
+        {(['week', 'month'] as const).map((v) => (
+          <button key={v} role="tab" aria-selected={period === v} onClick={() => setPeriod(v)}
+            className={cx('focus-ring rounded-full px-5 py-1.5 text-sm font-semibold transition', period === v ? 'bg-accent text-accent-on shadow-soft' : 'text-muted')}>{v === 'week' ? 'Weekly' : 'Monthly'}</button>
+        ))}
+      </div>
+      <WeekManager key={period} p={p} period={period} />
+    </div>
+  );
+}
+
 /** This week's numbers: pick a week, fill in what was achieved against its targets, lock it. */
 function WeekNumbersTab({ p, canEdit }: { p: Project; canEdit: boolean }) {
   const { tasks, daily } = useStore();
@@ -470,8 +486,7 @@ export function ProjectCard({ p, color }: { p: Project; color: string }) {
           </div>
         )}
         {active === 'targets' && manage && <>
-          <WeekManager p={p} />
-          <div className="grid gap-4 lg:grid-cols-2"><TargetEditor p={p} period="month" /></div>
+          <TargetsByPeriod p={p} />
         </>}
         {active === 'numbers' && <WeekNumbersTab p={p} canEdit={manage} />}
         {active === 'meetings' && <Meetings p={p} canEdit={manage} />}

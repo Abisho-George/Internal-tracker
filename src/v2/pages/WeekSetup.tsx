@@ -74,13 +74,64 @@ function RangePicker({ value, onPick, taken }: { value?: CustomWeek; onPick: (w:
   );
 }
 
+export type Period = 'week' | 'month';
+const monthOf = (d: string) => { const x = parseDay(d); const y = x.getFullYear(); const m = x.getMonth(); return { start: iso(y, m, 1), end: iso(y, m, new Date(y, m + 1, 0).getDate()) }; };
+
+/** Weeks and months are planned the same way; this hides where each one is stored. */
+function usePeriodApi(p: Project, period: Period) {
+  const st = useStore();
+  if (period === 'week') {
+    return {
+      list: sortedWeeks(p),
+      setDates: (old: string | null, w: CustomWeek) => st.setWeekDates(p.id, old, w),
+      remove: (start: string) => st.removeWeek(p.id, start),
+      plan: (ws: string) => weekTargetFor(p, ws),
+      planned: (ws: string) => !!p.weekPlans?.[ws],
+      text: (ws: string) => p.weekText?.[ws] ?? [],
+      off: (ws: string) => p.weekOff?.[ws] ?? [],
+      save: (ws: string, c: Counts, rows: TextTarget[], off: string[]) => { st.saveWeekPlan(p.id, ws, c); st.setWeekText(p.id, ws, rows); st.setWeekOff(p.id, ws, off); },
+    };
+  }
+  const list = [...(p.customMonths ?? [])].sort((a, b) => a.start.localeCompare(b.start));
+  const move = <T,>(rec: Record<string, T> | undefined, old: string | null, to: string) => {
+    const r = { ...rec };
+    if (old && old !== to && r[old] !== undefined) { r[to] = r[old]; delete r[old]; }
+    return r;
+  };
+  return {
+    list,
+    setDates: (old: string | null, w: CustomWeek) => {
+      if (!w.start || !w.end || w.end < w.start) throw new Error('A month must end on or after the day it starts.');
+      const others = list.filter((x) => x.start !== old);
+      if (others.some((x) => x.start <= w.end && w.start <= x.end)) throw new Error('Those days are already in another month.');
+      st.setMonthData(p.id, { customMonths: [...others, w], monthPlans: move(p.monthPlans, old, w.start), monthText: move(p.monthText, old, w.start), monthOff: move(p.monthOff, old, w.start) });
+    },
+    remove: (start: string) => {
+      const drop = <T,>(rec?: Record<string, T>) => { const r = { ...rec }; delete r[start]; return r; };
+      st.setMonthData(p.id, { customMonths: list.filter((x) => x.start !== start), monthPlans: drop(p.monthPlans), monthText: drop(p.monthText), monthOff: drop(p.monthOff) });
+    },
+    plan: (ws: string) => p.monthPlans?.[ws] ?? p.monthTarget,
+    planned: (ws: string) => !!p.monthPlans?.[ws],
+    text: (ws: string) => p.monthText?.[ws] ?? [],
+    off: (ws: string) => p.monthOff?.[ws] ?? [],
+    save: (ws: string, c: Counts, rows: TextTarget[], off: string[]) => {
+      const clean = rows.map((r) => ({ ...r, label: r.label.trim(), target: (r.target ?? '').trim() })).filter((r) => r.label || r.target || r.targetNum != null);
+      st.setMonthData(p.id, { monthPlans: { ...p.monthPlans, [ws]: c }, monthText: { ...p.monthText, [ws]: clean }, monthOff: { ...p.monthOff, [ws]: off } });
+    },
+  };
+}
+type PeriodApi = ReturnType<typeof usePeriodApi>;
+
 /**
  * Targets view: weeks are added one at a time. Pick a week, set its days (calendar or the Mon to Fri button),
  * then plan its targets: the project's numbers plus any extra rows (number, milestone or text). Prefill copies the week before.
  */
-export function WeekManager({ p }: { p: Project }) {
-  const { setWeekDates, removeWeek, saveWeekPlan, setWeekText, setWeekOff } = useStore();
-  const weeks = sortedWeeks(p);
+export function WeekManager({ p, period = 'week' }: { p: Project; period?: Period }) {
+  const api = usePeriodApi(p, period);
+  const weeks = api.list;
+  const W = period === 'week' ? 'Week' : 'Month';
+  const w_ = W.toLowerCase();
+  const nameOfPeriod = (i: number, w: CustomWeek) => (period === 'month' ? `${MONTHS[parseDay(w.start).getMonth()]} ${parseDay(w.start).getFullYear()}` : `Week ${i + 1}`);
   const cur = weeks.find((w) => w.start <= day(0) && day(0) <= w.end)?.start ?? weeks[weeks.length - 1]?.start ?? null;
   const [sel, setSel] = useState<string | null>(cur);
   const weekKey = weeks.map((w) => w.start).join(',');
@@ -91,41 +142,43 @@ export function WeekManager({ p }: { p: Project }) {
 
   const addWeek = () => {
     const last = weeks[weeks.length - 1];
-    const w = last ? monFri(addDays(last.end, 3)) : monFri(day(0));
-    if (safe(() => setWeekDates(p.id, null, w))) { setSel(w.start); toast({ title: `Week ${weeks.length + 1} added: ${fmtDay(w.start)} to ${fmtDay(w.end)}`, tone: 'success' }); }
+    const w = period === 'week' ? (last ? monFri(addDays(last.end, 3)) : monFri(day(0))) : last ? monthOf(addDays(last.end, 1)) : monthOf(day(0));
+    if (safe(() => api.setDates(null, w))) { setSel(w.start); toast({ title: `${nameOfPeriod(weeks.length, w)} added: ${fmtDay(w.start)} to ${fmtDay(w.end)}`, tone: 'success' }); }
   };
   const setDates = (w: CustomWeek) => {
-    if (safe(() => setWeekDates(p.id, week?.start ?? null, w))) { setSel(w.start); setPicking(false); toast({ title: `Week ${idx + 1}: ${fmtDay(w.start)} to ${fmtDay(w.end)}`, tone: 'success' }); }
+    if (safe(() => api.setDates(week?.start ?? null, w))) { setSel(w.start); setPicking(false); toast({ title: `${W} ${idx + 1}: ${fmtDay(w.start)} to ${fmtDay(w.end)}`, tone: 'success' }); }
   };
 
   return (
-    <div className="rounded-2xl border border-line p-4" data-testid="week-manager">
-      <p className="flex items-center gap-2 font-bold"><CalendarDays size={16} className="text-accent-ink" /> Weeks and targets</p>
-      <p className="text-xs text-muted">Add a week, set its days, then plan its targets. Add the next week whenever you want to plan ahead.</p>
+    <div className="rounded-2xl border border-line p-4" data-testid={`${w_}-manager`}>
+      <p className="flex items-center gap-2 font-bold"><CalendarDays size={16} className="text-accent-ink" /> {W}s and targets</p>
+      <p className="text-xs text-muted">Add a {w_}, set its days, then plan its targets. Add the next {w_} whenever you want to plan ahead.</p>
 
-      <div className="mt-3 flex flex-wrap items-center gap-1.5" role="tablist" aria-label="Weeks">
+      <div className="mt-3 flex flex-wrap items-center gap-1.5" role="tablist" aria-label={`${W}s`}>
         {weeks.map((w, i) => (
           <button key={w.start} role="tab" aria-selected={sel === w.start} onClick={() => { setSel(w.start); setPicking(false); }}
             className={cx('focus-ring relative flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-semibold transition-colors', sel === w.start ? 'border-transparent text-white' : 'border-line bg-surface text-ink hover:border-accent/50')}>
-            {sel === w.start && <motion.span layoutId="week-pill" className="absolute inset-0 rounded-full" style={{ background: WEEK_COLORS[i % WEEK_COLORS.length] }} transition={{ type: 'spring', stiffness: 500, damping: 36 }} />}
-            <span className="relative">Week {i + 1}</span>
+ {sel === w.start && <motion.span layoutId={`${w_}-pill`} className="absolute inset-0 rounded-full" style={{ background: WEEK_COLORS[i % WEEK_COLORS.length] }} transition={{ type: 'spring', stiffness: 500, damping: 36 }} />}
+            <span className="relative">{nameOfPeriod(i, w)}</span>
             {w.start <= day(0) && day(0) <= w.end && <span className="relative rounded-full bg-white/80 px-1.5 text-[9px] text-ink">now</span>}
           </button>
         ))}
-        <Btn tone="soft" onClick={addWeek}><Plus size={13} /> Add week {weeks.length + 1}</Btn>
+        <Btn tone="soft" onClick={addWeek}><Plus size={13} /> {period === 'week' ? `Add week ${weeks.length + 1}` : 'Add month'}</Btn>
       </div>
 
       {!week ? (
-        <p className="mt-3 rounded-xl border border-dashed border-line p-4 text-sm text-muted">No weeks yet. Press <b>Add week 1</b> to start with this week (Monday to Friday), then change the days if you need to.</p>
+        <p className="mt-3 rounded-xl border border-dashed border-line p-4 text-sm text-muted">{period === 'week'
+          ? <>No weeks yet. Press <b>Add week 1</b> to start with this week (Monday to Friday), then change the days if you need to.</>
+          : <>No months yet. Press <b>Add month</b> to start with this month, then change the days if you need to.</>}</p>
       ) : (
         <div className="mt-3 space-y-3">
           <div className="flex flex-wrap items-center gap-2 rounded-xl bg-surface-2/60 px-3 py-2">
             <span className="h-3 w-3 rounded-full" style={{ background: WEEK_COLORS[idx % WEEK_COLORS.length] }} />
-            <b>Week {idx + 1}</b><span className="text-sm" data-testid="week-dates">{fmtDay(week.start)} to {fmtDay(week.end)}</span>
+            <b>{nameOfPeriod(idx, week)}</b><span className="text-sm" data-testid={`${w_}-dates`}>{fmtDay(week.start)} to {fmtDay(week.end)}</span>
             <span className="ml-auto flex flex-wrap gap-2">
-              <Btn tone="ghost" className="border border-line bg-surface" onClick={() => setDates(monFri(week.start))}><Wand2 size={13} /> Mon to Fri</Btn>
+              <Btn tone="ghost" className="border border-line bg-surface" onClick={() => setDates(period === 'week' ? monFri(week.start) : monthOf(week.start))}><Wand2 size={13} /> {period === 'week' ? 'Mon to Fri' : 'Whole month'}</Btn>
               <Btn tone="ghost" className="border border-line bg-surface" onClick={() => setPicking((v) => !v)}><CalendarDays size={13} /> {picking ? 'Close calendar' : 'Change days'}</Btn>
-              <Btn tone="ghost" className="text-coral-ink" onClick={() => { if (window.confirm(`Remove week ${idx + 1} and its targets?`) && safe(() => removeWeek(p.id, week.start))) toast({ title: 'Week removed', tone: 'info' }); }}><Trash2 size={13} /> Remove</Btn>
+              <Btn tone="ghost" className="text-coral-ink" onClick={() => { if (window.confirm(`Remove ${nameOfPeriod(idx, week)} and its targets?`) && safe(() => api.remove(week.start))) toast({ title: `${W} removed`, tone: 'info' }); }}><Trash2 size={13} /> Remove</Btn>
             </span>
           </div>
           <AnimatePresence>
@@ -135,8 +188,8 @@ export function WeekManager({ p }: { p: Project }) {
               </motion.div>
             )}
           </AnimatePresence>
-          <WeekPlanTable key={week.start} p={p} ws={week.start} n={idx + 1} prev={weeks[idx - 1]?.start}
-            onSave={(counts, rows, off) => safe(() => { saveWeekPlan(p.id, week.start, counts); setWeekText(p.id, week.start, rows); setWeekOff(p.id, week.start, off); })} />
+          <WeekPlanTable key={period + week.start} p={p} api={api} period={period} ws={week.start} title={nameOfPeriod(idx, week)} prevTitle={idx > 0 ? nameOfPeriod(idx - 1, weeks[idx - 1]) : undefined} prev={weeks[idx - 1]?.start}
+            onSave={(counts, rows, off) => safe(() => api.save(week.start, counts, rows, off))} />
         </div>
       )}
     </div>
@@ -144,37 +197,37 @@ export function WeekManager({ p }: { p: Project }) {
 }
 
 /** A week's targets: the project's numbers and any extra rows, read-only until Edit. */
-function WeekPlanTable({ p, ws, n, prev, onSave }: { p: Project; ws: string; n: number; prev?: string; onSave: (c: Counts, rows: TextTarget[], off: string[]) => boolean }) {
-  const allMetrics = p.metrics.filter((m) => inPeriod(m, 'week'));
-  const planned = !!p.weekPlans?.[ws];
-  const counts = weekTargetFor(p, ws);
-  const rows = p.weekText?.[ws] ?? [];
+function WeekPlanTable({ p, api, period, ws, title, prevTitle, prev, onSave }: { p: Project; api: PeriodApi; period: Period; ws: string; title: string; prevTitle?: string; prev?: string; onSave: (c: Counts, rows: TextTarget[], off: string[]) => boolean }) {
+  const allMetrics = p.metrics.filter((m) => inPeriod(m, period));
+  const planned = api.planned(ws);
+  const counts = api.plan(ws);
+  const rows = api.text(ws);
   const [edit, setEdit] = useState<{ c: Record<string, string>; rows: TextTarget[]; off: string[] } | null>(null);
-  const off = edit?.off ?? p.weekOff?.[ws] ?? [];
+  const off = edit?.off ?? api.off(ws);
   const metrics = allMetrics.filter((m) => !off.includes(m.id));
   const removed = allMetrics.filter((m) => off.includes(m.id));
-  const start = (c: Counts, r: TextTarget[], o: string[] = p.weekOff?.[ws] ?? []) => setEdit({ c: Object.fromEntries(allMetrics.map((m) => [m.id, String(c[m.id] ?? 0)])), rows: r.map((x) => ({ ...x })), off: [...o] });
+  const start = (c: Counts, r: TextTarget[], o: string[] = api.off(ws)) => setEdit({ c: Object.fromEntries(allMetrics.map((m) => [m.id, String(c[m.id] ?? 0)])), rows: r.map((x) => ({ ...x })), off: [...o] });
   const updRow = (id: string, patch: Partial<TextTarget>) => setEdit((e) => e && { ...e, rows: e.rows.map((r) => (r.id === id ? { ...r, ...patch } : r)) });
   const save = () => {
     if (!edit) return;
     const c: Counts = {};
     for (const m of metrics) { const v = Number(edit.c[m.id] || 0); if (!Number.isFinite(v) || v < 0) { toast({ title: `${m.label}: type zero or more`, tone: 'error' }); return; } c[m.id] = Math.round(v); }
-    if (onSave(c, edit.rows, edit.off)) { setEdit(null); toast({ title: `Week ${n} targets saved and locked`, tone: 'success' }); }
+    if (onSave(c, edit.rows, edit.off)) { setEdit(null); toast({ title: `${title} targets saved and locked`, tone: 'success' }); }
   };
   const prefill = () => {
     if (!prev) return;
-    start(weekTargetFor(p, prev), (p.weekText?.[prev] ?? []).map((r, i) => ({ ...r, id: newRowId(i), actual: undefined, actualNum: undefined, status: undefined })), p.weekOff?.[prev] ?? []);
-    toast({ title: `Filled in from week ${n - 1}. Change anything, then Save.`, tone: 'info' });
+    start(api.plan(prev), api.text(prev).map((r, i) => ({ ...r, id: newRowId(i), actual: undefined, actualNum: undefined, status: undefined })), api.off(prev));
+    toast({ title: `Filled in from ${prevTitle}. Change anything, then Save.`, tone: 'info' });
   };
   const list = edit?.rows ?? rows;
   return (
     <div className="rounded-xl border border-line" data-testid="week-plan">
       <div className="flex flex-wrap items-center justify-between gap-2 border-b border-line px-3 py-2">
-        <p className="flex items-center gap-2 text-sm font-bold">Week {n} targets {edit ? <Chip tone="butter"><Pencil size={11} /> Editing</Chip> : planned ? <Chip tone="mint"><Lock size={11} /> Saved</Chip> : <Chip tone="grey">Not planned yet</Chip>}</p>
+        <p className="flex items-center gap-2 text-sm font-bold">{title} targets {edit ? <Chip tone="butter"><Pencil size={11} /> Editing</Chip> : planned ? <Chip tone="mint"><Lock size={11} /> Saved</Chip> : <Chip tone="grey">Not planned yet</Chip>}</p>
         <span className="flex flex-wrap gap-2">
-          {prev && <Btn tone="ghost" className="border border-line" onClick={prefill}><Copy size={13} /> Prefill from week {n - 1}</Btn>}
+          {prev && <Btn tone="ghost" className="border border-line" onClick={prefill}><Copy size={13} /> Prefill from {prevTitle}</Btn>}
           {edit ? <><Btn tone="ghost" onClick={() => setEdit(null)}>Cancel</Btn><Btn onClick={save}><Lock size={13} /> Save</Btn></>
-            : <Btn onClick={() => start(counts, rows)}><Pencil size={13} /> {planned || rows.length ? 'Edit' : 'Plan this week'}</Btn>}
+            : <Btn onClick={() => start(counts, rows)}><Pencil size={13} /> {planned || rows.length ? 'Edit' : `Plan this ${period}`}</Btn>}
         </span>
       </div>
       <table className="w-full text-sm">
