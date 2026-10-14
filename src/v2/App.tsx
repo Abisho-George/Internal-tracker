@@ -2,7 +2,7 @@ import { Component, useEffect, useRef, useState, type ReactNode } from 'react';
 import { HashRouter, NavLink, Navigate, Route, Routes, useNavigate } from 'react-router-dom';
 import { Bell, ClipboardList, FolderKanban, LayoutDashboard, MessageCircle, RotateCcw, NotebookPen, Palette, Settings, UserCircle, Users } from 'lucide-react';
 import { Toaster, toast } from '@/components';
-import { canManage, isLeadRole, PEOPLE, PERSONAS } from './data';
+import { isLeadRole, PEOPLE, PERSONAS } from './data';
 import { nameOf, push, useStore } from './store';
 import { FunLayer, Mascot, ThemeApplier, ThemeMenu } from './theme';
 import { Avatar, Btn, Card, cx } from './ui';
@@ -50,7 +50,7 @@ function useLiveNotices() {
 }
 
 function Shell() {
-  const { me, notices, projects, setMe, reset } = useStore();
+  const { me, notices, setMe, reset } = useStore();
   const person = PEOPLE.find((p) => p.id === me)!;
   const [chatOpen, setChatOpen] = useState(false);
   const [setupOpen, setSetupOpen] = useState(false);
@@ -61,8 +61,7 @@ function Shell() {
 
   const lead = isLeadRole(person.role);
   // Resources and PMs share one view; Assign appears once they own or help run (admin) an approved project.
-  const ownsProject = projects.some((p) => canManage(p, me) && p.status === 'active');
-  const navItems: NavItem[] = [...(lead ? [DASH, PROJECTS, ASSIGN, PEOPLE_NAV] : ownsProject ? [DASH, PROJECTS, ASSIGN] : [DASH, PROJECTS]), PROFILE];
+  const navItems: NavItem[] = [...(lead ? [DASH, PROJECTS, ASSIGN, PEOPLE_NAV] : [DASH, PROJECTS, ASSIGN]), PROFILE];
   const rail = [
     { to: '/daily', label: 'Tasks update', icon: NotebookPen, badge: 0 },
     ...navItems.map((n) => ({ ...n, badge: 0 })),
@@ -116,7 +115,7 @@ function Shell() {
             <Route path="/projects" element={lead ? <LeadProjects /> : <Projects />} />
             <Route path="/daily" element={lead ? <TeamDaily /> : <DailyUpdate />} />
             <Route path="/profile" element={<Profile />} />
-            {(lead || ownsProject) && <Route path="/assign" element={<Assign key={me} />} />}
+            <Route path="/assign" element={<Assign key={me} />} />
             {lead && <Route path="/people" element={<People />} />}
             {lead && <Route path="/people/:id" element={<PersonPage />} />}
             <Route path="*" element={<Navigate to="/" replace />} />

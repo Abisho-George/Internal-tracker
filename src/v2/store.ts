@@ -703,7 +703,7 @@ export const useStore = create<Data & Actions>()(
         if (!(a.qty > 0)) throw new Error('Quantity must be at least 1.');
         if (!(a.targetMinutes > 0)) throw new Error('Target time must be at least 1 minute.');
         const p = findProject(a.projectId);
-        if (!canManage(p, me)) throw new Error(`Only the owner or an admin of ${p.name} can assign its tasks.`);
+        if (!canManage(p, me) && !p.teamIds.includes(me)) throw new Error(`Only people on ${p.name} can assign its tasks.`);
         if (p.status !== 'active') throw new Error(`${p.name} is still waiting for approval.`);
         let typeId = a.typeId;
         let cs = typeId === 'custom' ? findCustomStandard(p, a.customStandardId) ?? findCustomStandard(p, a.customName) : undefined;

@@ -99,11 +99,12 @@ let cartKey = 0;
 export default function Assign() {
   const { me, tasks, projects, assignMany } = useStore();
   const lead = isLeadRole(PEOPLE.find((p) => p.id === me)?.role);
-  // Owners, project admins, managers and founders can assign on a project.
-  const choices = projects.filter((p) => p.status === 'active' && canManage(p, me));
+  // Owners, project admins, managers and founders can assign on a project; team members can assign within their own projects (to teammates or themselves).
+  const choices = projects.filter((p) => p.status === 'active' && (canManage(p, me) || p.teamIds.includes(me)));
   const [projectId, setProjectId] = useState(choices[0]?.id ?? '');
   const project = choices.find((p) => p.id === projectId) ?? choices[0];
-  const people = PEOPLE.filter((p) => p.id !== me && p.role !== 'founder' && (lead || project?.teamIds.includes(p.id)));
+  const manager = !!project && canManage(project, me);
+  const people = PEOPLE.filter((p) => (p.id !== me || !manager) && p.role !== 'founder' && (lead || project?.teamIds.includes(p.id) || (!manager && p.id === me)));
   const [assigneeId, setAssigneeId] = useState('');
   const [typeId, setTypeId] = useState('l1');
   const [variant, setVariant] = useState('Personalised');
