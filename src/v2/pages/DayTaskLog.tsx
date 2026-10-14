@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { CalendarRange, Check, CheckSquare, ChevronDown, FileText, Hash, ClipboardList, Copy, Lock, Pencil, Plus, Save, Send, Trash2, X } from 'lucide-react';
 import { toast } from '@/components';
-import { addDays, canManage, previousWorkingDay, TASK_TYPES, toMinutes, weekStartOf, type Project } from '../data';
+import { addDays, canManage, fmtDay, previousWorkingDay, TASK_TYPES, toMinutes, weekStartOf, type Project } from '../data';
 import { emptyDaily, emptyWeekly, useStore, type DayBlock, type ExtraHours, type TaskEntry, type EntryKind, type MilestoneStatus, MILESTONE_STATUS } from '../store';
 import { Bar, Btn, Card, Chip, cx, fmtMin, safe } from '../ui';
 import { colorOf } from './Widgets';
@@ -341,8 +341,8 @@ export default function DayTaskLog({ personId, date, plan, extra, readOnly, kind
 export function TargetsProgress({ personId, date, kind }: { personId: string; date: string; kind: LogKind }) {
   const { projects, daily, weekly } = useStore();
   const mon = weekStartOf(date);
-  const list = (kind === 'day' ? daily[`${personId}|${date}`]?.entries : weekly[`${personId}|${mon}`]?.entries) ?? [];
-  const done = (e: TaskEntry) => ((e.kind ?? 'number') === 'milestone' ? (e.status === 'Completed' ? 1 : 0) : (e.kind ?? 'number') === 'text' ? 0 : (kind === 'week' ? weekDone(e, personId, mon, daily) : e.doneQty) ?? 0);
+  const list = kind === 'day' ? daily[`${personId}|${date}`]?.entries ?? [] : mergeWeek(personId, mon, daily, weekly[`${personId}|${mon}`]?.entries ?? []);
+  const done = (e: TaskEntry) => ((e.kind ?? 'number') === 'milestone' ? (e.status === 'Completed' ? 1 : 0) : (e.kind ?? 'number') === 'text' ? 0 : e.doneQty ?? 0);
   const tgt = (e: TaskEntry) => ((e.kind ?? 'number') === 'milestone' ? 1 : (e.kind ?? 'number') === 'text' ? 0 : e.qty ?? 0);
   const counted = list.filter((e) => tgt(e) > 0);
   const pids = [...new Set(list.map((e) => e.projectId))];
@@ -351,9 +351,9 @@ export function TargetsProgress({ personId, date, kind }: { personId: string; da
   const pct = (d: number, t: number) => (t ? Math.round((d / t) * 100) : 0);
   const tone = (p: number) => (p >= 100 ? 'mint' : p >= 60 ? 'sky' : 'peach');
   const editBtn = <button type="button" className="focus-ring flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-semibold text-accent-ink hover:bg-surface-2"
-    onClick={() => (kind === 'day' ? editDayTasks() : document.getElementById('weekly-update')?.scrollIntoView({ behavior: 'smooth' }))}><Pencil size={11} /> Edit</button>;
+    onClick={() => (kind === 'day' ? editDayTasks() : window.dispatchEvent(new Event(WEEK_EDIT_EVENT)))}><Pencil size={11} /> Edit</button>;
 
-  if (!list.length) return <div className="flex items-center justify-between rounded-xl border border-dashed border-line px-3 py-2 text-xs text-muted" data-progress={kind}>No {kind === 'day' ? 'daily' : 'weekly'} tasks entered yet.{editBtn}</div>;
+  if (!list.length) return <div className="flex items-center justify-between rounded-xl border border-dashed border-line px-3 py-2 text-xs text-muted" data-progress={kind}>{kind === 'day' ? 'No daily tasks entered yet.' : 'Nothing yet this week. Tasks from your daily updates add up here.'}{editBtn}</div>;
   return (
     <div className="space-y-3 rounded-xl border border-line p-3" data-progress={kind}>
       <div className="flex items-center gap-3">
@@ -389,5 +389,82 @@ export function TargetsProgress({ personId, date, kind }: { personId: string; da
         );
       })}
     </div>
+  );
+}
+
+const WEEK_EDIT_EVENT = 'ls-edit-week';
+
+/**
+ * The week, merged from every daily update (plus anything added by hand for the week):
+ * the same task on several days is one row with the numbers added up.
+ */
+export function mergeWeek(personId: string, mon: string, daily: ReturnType<typeof useStore.getState>['daily'], extra: TaskEntry[] = []): TaskEntry[] {
+  const rows = [...[0, 1, 2, 3, 4].flatMap((i) => daily[`${personId}|${addDays(mon, i)}`]?.entries ?? []), ...extra];
+  const out = new Map<string, TaskEntry>();
+  rows.forEach((e) => {
+    const k = `${e.projectId}|${e.task}|${(e.custom ?? '').trim().toLowerCase()}|${e.kind ?? 'number'}`;
+    const m = out.get(k);
+    if (!m) { out.set(k, { ...e, id: `wk-${k}`, remarks: e.remarks ?? '' }); return; }
+    m.qty = e.qty != null || m.qty != null ? (m.qty ?? 0) + (e.qty ?? 0) : undefined;
+    m.doneQty = e.doneQty != null || m.doneQty != null ? (m.doneQty ?? 0) + (e.doneQty ?? 0) : undefined;
+    m.estMin += e.estMin;
+    m.actualMin = e.actualMin != null || m.actualMin != null ? (m.actualMin ?? 0) + (e.actualMin ?? 0) : undefined;
+    if (e.targetText) m.targetText = e.targetText;
+    if (e.actualText) m.actualText = e.actualText;
+    if (e.status) m.status = e.status;
+    if (!m.desc && e.desc) m.desc = e.desc;
+    if (e.remarks && !m.remarks.includes(e.remarks)) m.remarks = m.remarks ? `${m.remarks}; ${e.remarks}` : e.remarks;
+  });
+  return [...out.values()];
+}
+
+/** Weekly update, filled automatically from the daily updates. Submit the end of week here; Edit adds anything else for the week. */
+export function WeeklyAuto({ personId, date, readOnly }: { personId: string; date: string; readOnly?: boolean }) {
+  const { daily, weekly, saveWeekly } = useStore();
+  const mon = weekStartOf(date);
+  const rec = weekly[`${personId}|${mon}`];
+  const [editing, setEditing] = useState(false);
+  useEffect(() => { setEditing(false); }, [personId, mon]);
+  useEffect(() => {
+    if (readOnly) return;
+    const open = () => { setEditing(true); setTimeout(() => document.getElementById('weekly-update')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50); };
+    window.addEventListener(WEEK_EDIT_EVENT, open);
+    return () => window.removeEventListener(WEEK_EDIT_EVENT, open);
+  }, [readOnly]);
+  const merged = mergeWeek(personId, mon, daily, rec?.entries ?? []);
+  const est = merged.reduce((a, e) => a + e.estMin, 0);
+  const act = merged.reduce((a, e) => a + (e.actualMin ?? 0), 0);
+  const submit = () => safe(() => {
+    const at = new Date().toISOString();
+    saveWeekly(personId, mon, { entries: rec?.entries ?? [], entriesDoneAt: at, eowAt: at, ...(rec?.targetsAt ? {} : { targetsAt: at }) });
+    setEditing(false);
+    toast({ title: `End of week submitted at ${hhmm(at)} 🎉`, tone: 'success' });
+  });
+  return (
+    <Card className="!p-0" >
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line px-4 py-3">
+        <div>
+          <h2 className="flex items-center gap-2 text-base font-bold"><CalendarRange size={17} className="text-accent-ink" />Weekly update</h2>
+          <p className="text-xs text-muted">{fmtDay(mon)} to {fmtDay(addDays(mon, 4))} · fills in from your daily updates. The same task on different days adds up in one row.</p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-xs text-muted">Estimated <b className="text-ink">{fmtMin(est)}</b> · taken <b className="text-ink">{fmtMin(act)}</b></span>
+          {rec?.entriesDoneAt
+            ? <span data-testid="week-done-time"><Chip tone="lavender"><Send size={11} /> End of week {dayHhmm(rec.entriesDoneAt)}</Chip></span>
+            : <Chip tone="grey">End of week not sent</Chip>}
+          {!readOnly && <Btn tone="ghost" className="border border-line" onClick={() => setEditing((v) => !v)}><Pencil size={13} /> {editing ? 'Close edit' : 'Edit'}</Btn>}
+          {!readOnly && <Btn onClick={submit}><Send size={13} /> {rec?.entriesDoneAt ? 'Submit again' : 'Submit end of week'}</Btn>}
+        </div>
+      </div>
+      <div className="space-y-3 p-4">
+        <TargetsProgress personId={personId} date={date} kind="week" />
+        {editing && !readOnly && (
+          <div>
+            <p className="mb-2 text-xs text-muted">Add anything that was not in a daily update. A task that already exists adds to the same row above.</p>
+            <DayTaskLog personId={personId} date={date} kind="week" />
+          </div>
+        )}
+      </div>
+    </Card>
   );
 }

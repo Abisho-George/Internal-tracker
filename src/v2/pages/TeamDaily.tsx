@@ -4,7 +4,7 @@ import { PEOPLE, weekStartOf } from '../data';
 import { dailyCounts, dayTime, TEAM_IDS, weekTime, weeklyCounts } from '../analytics';
 import { nameOf, useStore } from '../store';
 import { Avatar, Bar, Card, Chip, cx } from '../ui';
-import DayTaskLog from './DayTaskLog';
+import DayTaskLog, { WeeklyAuto } from './DayTaskLog';
 import { DateNav, dayHhmm, dayRows, hhmm, HoursLine, lastWorkingDay, PendingHint, ReportTable, targetsMet, weekLabel, weekRows, type Hours, type TvRow } from './DailyViews';
 
 type View = 'daily' | 'weekly';
@@ -137,7 +137,7 @@ export default function TeamDaily() {
           {shown.map((r) => (
             <div key={r.id} className="space-y-2" data-person-sheet={r.id}>
               <p className="flex items-center gap-2 font-bold"><Avatar id={r.id} size="sm" />{r.name}<span className="text-xs font-normal text-muted">{r.title}</span></p>
-              {view === 'daily' ? <DayTaskLog personId={r.id} date={date} readOnly /> : <DayTaskLog personId={r.id} date={date} kind="week" readOnly />}
+              {view === 'daily' ? <DayTaskLog personId={r.id} date={date} readOnly /> : <WeeklyAuto personId={r.id} date={date} readOnly />}
             </div>
           ))}
         </div>

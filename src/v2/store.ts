@@ -565,7 +565,7 @@ function seedEntries(projects: Project[], daily: Record<string, DailyUpdate>, we
         ...e, qty: Math.round(((e.qty ?? 0) * scale) / 5) * 5, estMin: Math.round((e.estMin * scale) / 15) * 15,
         actualMin: w < 0 && e.actualMin ? e.actualMin : undefined, remarks: w < 0 ? REMARKS[Math.floor(rnd() * REMARKS.length)] : '',
       }));
-      weekly[key] = { ...rec, entries, entriesDoneAt: w < 0 ? new Date(`${addDays(mon, 4)}T18:15:00`).toISOString() : undefined, entriesAt: new Date(`${mon}T10:30:00`).toISOString() <= nowIso ? new Date(`${mon}T10:30:00`).toISOString() : undefined };
+      weekly[key] = { ...rec, entries: [], entriesDoneAt: w < 0 ? new Date(`${addDays(mon, 4)}T18:15:00`).toISOString() : undefined, entriesAt: new Date(`${mon}T10:30:00`).toISOString() <= nowIso ? new Date(`${mon}T10:30:00`).toISOString() : undefined };
     });
   });
 }
@@ -1106,7 +1106,7 @@ export const useStore = create<Data & Actions>()(
     },
     {
       name: 'ls-tracker-v2',
-      version: 13,
+      version: 14,
       // Old or unreadable saved data falls back to a fresh demo instead of crashing.
       migrate: () => seed() as never,
       merge: (persisted, current) => {

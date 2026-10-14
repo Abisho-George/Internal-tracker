@@ -8,8 +8,8 @@ import { Btn, Card, cx, fmtMin, input, safe } from '../ui';
 import { colorOf, DayTracker } from './Widgets';
 import { AUTO_METRICS, CustomRows, DateNav, dayRows, DurationInput, HoursStats, lastWorkingDay, NoteView, PendingHint, ReportTable } from './DailyViews';
 import { PlanBuilder } from './PlanBuilder';
-import DayTaskLog, { TargetsProgress } from './DayTaskLog';
-import { EodIcon, SodIcon, SUBMITTED, TaskLine, TimeBreakdown, UpdateSection, WeeklySections } from './TaskUpdateSections';
+import DayTaskLog, { TargetsProgress, WeeklyAuto } from './DayTaskLog';
+import { EodIcon, SodIcon, SUBMITTED, TaskLine, TimeBreakdown, UpdateSection } from './TaskUpdateSections';
 
 const TIMES = Array.from({ length: 19 }, (_, i) => `${String(10 + Math.floor(i / 2)).padStart(2, '0')}:${i % 2 ? '30' : '00'}`);
 let bid = 0;
@@ -125,7 +125,6 @@ export default function DailyUpdate() {
       </section>
 
       <DayTaskLog personId={me} date={date} plan={plan} extra={extra} />
-      <DayTaskLog personId={me} date={date} kind="week" />
 
       <div className="border-t-2 border-dashed border-line pt-5">
         <div className="flex flex-wrap items-center justify-between gap-3">
@@ -196,7 +195,7 @@ export default function DailyUpdate() {
         </UpdateSection>
       </div>
 
-      <WeeklySections personId={me} date={date} />
+      <WeeklyAuto personId={me} date={date} />
     </div>
   );
 }
