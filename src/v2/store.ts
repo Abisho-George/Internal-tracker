@@ -2,8 +2,8 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import {
   addDays, canManage, day, findCustomStandard, isLeadRole, isWorkingDay, nextWorkingDay, pastWorkingDays, PEOPLE, previousWorkingDay, rollPeriods, seedProjects, seedTasks, standardFor, targetFor,
-  taskTitle, TASK_TYPES, toMinutes, weekStart, weekStartOf, projectWeekStart, WORK, ZERO, METRICS,
-  type Counts, type CustomStandard, type Metric, type Project, type Task, type TaskEvent,
+  taskTitle, TASK_TYPES, toMinutes, weekStart, weekStartOf, projectWeekStart, monToFriWeeks, WORK, ZERO, METRICS,
+  type Counts, type CustomStandard, type CustomWeek, type TextTarget, type Metric, type Project, type Task, type TaskEvent,
 } from './data';
 import { daySnapshot, weekSnapshot } from './analytics';
 
@@ -198,6 +198,10 @@ interface Actions {
   setWeekPlan: (projectId: string, weekStart: string, metric: string, value: number) => void;
   saveWeekPlan: (projectId: string, weekStart: string, counts: Counts) => void;
   clearWeekPlan: (projectId: string, weekStart: string) => void;
+  /** Set the project's weeks from the calendar (owner or admin). */
+  setCustomWeeks: (projectId: string, weeks: CustomWeek[]) => void;
+  /** Written targets for one week (owner or admin); actuals can be filled in from This week's numbers. */
+  setWeekText: (projectId: string, weekStart: string, rows: TextTarget[]) => void;
   // Custom standard tasks (owner / admins). addCustomStandard returns the new id.
   addCustomStandard: (projectId: string, s: { name: string; unit: string; minutes: number }) => string;
   removeCustomStandard: (projectId: string, id: string) => void;
@@ -582,6 +586,16 @@ function seed(): Data {
   });
   const weekly = seedWeekly(tasks);
   seedEntries(projects, daily, weekly);
+  // Northwind runs on Monday to Friday weeks with a couple of written targets this week.
+  projects = projects.map((p) => {
+    if (p.id !== 'northwind') return p;
+    const customWeeks = monToFriWeeks(p.startDate, p.endDate);
+    const cur = projectWeekStart({ startDate: p.startDate, customWeeks }, day(0));
+    return { ...p, customWeeks, weekText: { [cur]: [
+      { id: 'tt1', label: 'Email sequence', target: 'Launch v2 of the CFO sequence to 200 contacts', actual: 'Live for 120 contacts, rest on Thursday' },
+      { id: 'tt2', label: 'Case study', target: 'Get client sign-off on the fintech case study' },
+    ] } };
+  });
   // Shared links on work waiting for review, and two approvals sent without an assigned task.
   tasks.filter((t) => t.status === 'in_review').forEach((t, i) => {
     t.links = i % 2 === 0 ? [`https://docs.google.com/spreadsheets/d/ls-${t.id}/edit`] : [`https://docs.google.com/spreadsheets/d/ls-${t.id}/edit`, 'https://drive.google.com/drive/folders/ls-proof'];
@@ -1054,6 +1068,20 @@ export const useStore = create<Data & Actions>()(
           if (prevOwner !== me) notify(prevOwner, `${first(me)} handed ${p.name} over to ${first(toId)}`, 'project');
           leads().filter((id) => id !== me && id !== toId).forEach((id) => notify(id, `${first(prevOwner)} handed ${p.name} over to ${first(toId)}`, 'project'));
         },
+        setCustomWeeks: (pid, weeks) => {
+          owns(pid);
+          const sorted = [...weeks].sort((a, b) => a.start.localeCompare(b.start));
+          sorted.forEach((w, i) => {
+            if (!w.start || !w.end || w.end < w.start) throw new Error('A week must end on or after the day it starts.');
+            if (i && sorted[i - 1].end >= w.start) throw new Error('Two weeks overlap. Pick days that are not in another week.');
+          });
+          proj(pid, (x) => ({ ...x, customWeeks: sorted }));
+        },
+        setWeekText: (pid, ws, rows) => {
+          owns(pid);
+          const clean = rows.map((r) => ({ ...r, label: r.label.trim(), target: r.target.trim() })).filter((r) => r.label || r.target);
+          proj(pid, (x) => ({ ...x, weekText: { ...x.weekText, [ws]: clean } }));
+        },
         setWeekPlan: (pid, ws, metric, value) => {
           const mon = projectWeekStart(owns(pid), ws);
           const v = Number(value);
@@ -1106,7 +1134,7 @@ export const useStore = create<Data & Actions>()(
     },
     {
       name: 'ls-tracker-v2',
-      version: 14,
+      version: 15,
       // Old or unreadable saved data falls back to a fresh demo instead of crashing.
       migrate: () => seed() as never,
       merge: (persisted, current) => {

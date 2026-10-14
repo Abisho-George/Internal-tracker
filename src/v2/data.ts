@@ -182,6 +182,11 @@ export const METRICS: MetricDef[] = [
 export type Counts = Record<string, number>;
 export const ZERO: Counts = {};
 
+/** A week the project manager set on the calendar (any days, e.g. Monday to Friday or Wednesday to Tuesday). */
+export interface CustomWeek { start: string; end: string }
+/** A written target for a week (for things that are not a number), with what actually happened. */
+export interface TextTarget { id: string; label: string; target: string; actual?: string }
+
 export interface Meeting { id: string; company: string; contact: string; date: string; time: string }
 
 /** A project-specific task with its own standard time, e.g. "LinkedIn connection request", 0.5 min per request. */
@@ -209,6 +214,10 @@ export interface Project {
   monthTarget: Counts;
   /** Pre-planned weekly targets keyed by week start (Monday, yyyy-MM-dd). Falls back to weekTarget. */
   weekPlans: Record<string, Counts>;
+  /** Weeks set by hand on the calendar in the Targets view; when empty, weeks are 7-day blocks from the start date. */
+  customWeeks?: CustomWeek[];
+  /** Written targets per week, keyed by week start. */
+  weekText?: Record<string, TextTarget[]>;
   /** Locked targets are what management sees. */
   weekLocked: boolean;
   monthLocked: boolean;
@@ -239,8 +248,8 @@ export const isOwner = (p: Pick<Project, 'pmId'> | undefined, personId: string) 
 export const isAdmin = (p: Pick<Project, 'admins'> | undefined, personId: string) => !!p?.admins?.includes(personId);
 
 /** The weekly target in force for a given week: its saved plan, or the default weekly target. */
-export function weekTargetFor(p: Pick<Project, 'weekPlans' | 'weekTarget'> & { startDate?: string }, date: string): Counts {
-  return p.weekPlans?.[projectWeekStart({ startDate: p.startDate ?? '' }, date)] ?? p.weekPlans?.[weekStartOf(date)] ?? p.weekTarget;
+export function weekTargetFor(p: Pick<Project, 'weekPlans' | 'weekTarget'> & { startDate?: string; customWeeks?: CustomWeek[] }, date: string): Counts {
+  return p.weekPlans?.[projectWeekStart({ startDate: p.startDate ?? '', customWeeks: p.customWeeks }, date)] ?? p.weekPlans?.[weekStartOf(date)] ?? p.weekTarget;
 }
 /** True when that day's numbers are finalised for the project (default today). */
 export function isFinalized(p: Pick<Project, 'finalized'>, date: string = day(0)): boolean {
@@ -261,9 +270,13 @@ export interface ProjectWeek { n: number; start: string; end: string; label: str
  * The project split into 7-day weeks counted from its start date: "Week 1 · 14 Oct to 20 Oct".
  * Runs to the end date (the last week is cut at the end date). Without an end date it runs `ahead` weeks past today.
  */
-export function projectWeeks(p: { startDate: string; endDate?: string }, ahead = 4): ProjectWeek[] {
-  if (!p.startDate) return [];
+export function projectWeeks(p: { startDate: string; endDate?: string; customWeeks?: CustomWeek[] }, ahead = 4): ProjectWeek[] {
   const today = day(0);
+  if (p.customWeeks?.length) {
+    return [...p.customWeeks].sort((a, b) => a.start.localeCompare(b.start))
+      .map((w, i) => ({ n: i + 1, start: w.start, end: w.end, label: `Week ${i + 1} · ${fmtDay(w.start)} to ${fmtDay(w.end)}`, plannedAhead: w.start > today }));
+  }
+  if (!p.startDate) return [];
   const last = p.endDate && p.endDate >= p.startDate ? p.endDate : addDays(today > p.startDate ? today : p.startDate, ahead * 7);
   const out: ProjectWeek[] = [];
   for (let ws = p.startDate, n = 1; ws <= last && n <= 104; ws = addDays(ws, 7), n++) {
@@ -272,8 +285,25 @@ export function projectWeeks(p: { startDate: string; endDate?: string }, ahead =
   }
   return out;
 }
+/** Monday to Friday weeks covering start to end (a short first or last week is cut at the dates). */
+export function monToFriWeeks(start: string, end: string): CustomWeek[] {
+  const out: CustomWeek[] = [];
+  let d = start;
+  while (d <= end && out.length < 120) {
+    const dow = parseDay(d).getDay();
+    if (dow === 0 || dow === 6) { d = addDays(d, dow === 6 ? 2 : 1); continue; }
+    const fri = addDays(d, 5 - dow);
+    out.push({ start: d, end: fri > end ? end : fri });
+    d = addDays(fri, 3);
+  }
+  return out;
+}
 /** Start of the project week holding `date` (dates outside the project fall back to their Monday). */
-export function projectWeekStart(p: { startDate: string }, date: string): string {
+export function projectWeekStart(p: { startDate: string; customWeeks?: CustomWeek[] }, date: string): string {
+  if (p.customWeeks?.length) {
+    const w = p.customWeeks.find((x) => x.start <= date && date <= x.end);
+    if (w) return w.start;
+  }
   if (!p.startDate || date < p.startDate) return weekStartOf(date);
   const days = Math.round((parseDay(date).getTime() - parseDay(p.startDate).getTime()) / 86400000);
   return addDays(p.startDate, Math.floor(days / 7) * 7);

@@ -197,24 +197,6 @@ export function ProjectSetup({ open, onClose, edit }: { open: boolean; onClose: 
         <label className="text-sm font-semibold sm:col-span-2">Description<textarea className={cx(input, 'mt-1 text-ink')} rows={2} value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Who are we reaching, and what does success look like?" /></label>
       </div>
 
-      <Section icon={<CalendarRange size={15} className="text-accent" />} title="Project weeks"
-        hint={weeks.length ? <>Split automatically into 7-day weeks from the start date to the end date. Weekly targets are planned in Tasks update, under Weekly targets.</> : undefined}>
-        {weeks.length === 0 ? <p className="text-xs font-semibold text-coral-ink">Pick a start date and an end date after it to see the weeks.</p> : (
-          <>
-            <p className="mb-2 text-xs text-muted"><b className="text-ink">{weeks.length} week{weeks.length === 1 ? '' : 's'}</b> from {fmtDay(weeks[0].start)} to {fmtDay(weeks[weeks.length - 1].end)}</p>
-            <ul className="flex flex-wrap gap-1.5" aria-label="Week preview">
-              {shownWeeks.map((w) => (
-                <li key={w.start} className={cx('rounded-lg border px-2 py-1 text-xs', w.start <= day(0) && day(0) <= w.end ? 'border-accent bg-accent-soft font-semibold text-accent-ink' : 'border-line bg-surface text-ink')}>
-                  {w.label}{w.start <= day(0) && day(0) <= w.end ? ' (this week)' : w.start === weekStart(1) ? ' (next week)' : ''}
-                </li>
-              ))}
-              {weeks.length > 9 && (
-                <li><button type="button" className="focus-ring rounded-lg px-2 py-1 text-xs font-semibold text-accent-ink hover:bg-surface" onClick={() => setAllWeeks((v) => !v)}>{allWeeks ? 'Show fewer' : `+ ${weeks.length - 8} more weeks`}</button></li>
-              )}
-            </ul>
-          </>
-        )}
-      </Section>
 
       <Section icon={<span>⏱️</span>} title="Standard time for this project" hint="Every target time and on-time % for this project is measured against these. Different projects can have different standards.">
         <div className="grid gap-3 sm:grid-cols-3">
