@@ -42,7 +42,7 @@ export interface WeeklyUpdate {
   /** Frozen automatically when the end-of-week update is sent. */
   eowSnapshot?: Snapshot;
   /** Numbers corrected by hand on the weekly view, keyed by the merged row (project|task|name|type). */
-  overrides?: Record<string, { qty?: number; doneQty?: number }>;
+  overrides?: Record<string, { qty?: number; doneQty?: number; status?: MilestoneStatus; actualText?: string; targetText?: string }>;
   /** Weekly task rows per project, same shape as the daily update; locked when entriesAt is set. */
   entries?: TaskEntry[];
   entriesAt?: string;
@@ -204,6 +204,9 @@ interface Actions {
   setCustomWeeks: (projectId: string, weeks: CustomWeek[]) => void;
   /** Written targets for one week (owner or admin); actuals can be filled in from This week's numbers. */
   setWeekText: (projectId: string, weekStart: string, rows: TextTarget[]) => void;
+  /** Add a week (oldStart null) or change a week's dates; its plan and written targets move with it. */
+  setWeekDates: (projectId: string, oldStart: string | null, week: CustomWeek) => void;
+  removeWeek: (projectId: string, start: string) => void;
   // Custom standard tasks (owner / admins). addCustomStandard returns the new id.
   addCustomStandard: (projectId: string, s: { name: string; unit: string; minutes: number }) => string;
   removeCustomStandard: (projectId: string, id: string) => void;
@@ -591,11 +594,13 @@ function seed(): Data {
   // Northwind runs on Monday to Friday weeks with a couple of written targets this week.
   projects = projects.map((p) => {
     if (p.id !== 'northwind') return p;
-    const customWeeks = monToFriWeeks(p.startDate, p.endDate);
+    // Only last week, this week and next week are set; the manager adds more as they plan.
+    const customWeeks = monToFriWeeks(weekStart(-1), addDays(weekStart(1), 4));
     const cur = projectWeekStart({ startDate: p.startDate, customWeeks }, day(0));
     return { ...p, customWeeks, weekText: { [cur]: [
-      { id: 'tt1', label: 'Email sequence', target: 'Launch v2 of the CFO sequence to 200 contacts', actual: 'Live for 120 contacts, rest on Thursday' },
-      { id: 'tt2', label: 'Case study', target: 'Get client sign-off on the fintech case study' },
+      { id: 'tt1', label: 'Email sequence', kind: 'text' as const, target: 'Launch v2 of the CFO sequence to 200 contacts', actual: 'Live for 120 contacts, rest on Thursday' },
+      { id: 'tt2', label: 'Case study sign-off', kind: 'milestone' as const, target: 'Client signs off the fintech case study', status: 'In progress' },
+      { id: 'tt3', label: 'LinkedIn connection requests', kind: 'number' as const, target: '', targetNum: 150, actualNum: 64 },
     ] } };
   });
   // Shared links on work waiting for review, and two approvals sent without an assigned task.
@@ -1081,8 +1086,31 @@ export const useStore = create<Data & Actions>()(
         },
         setWeekText: (pid, ws, rows) => {
           owns(pid);
-          const clean = rows.map((r) => ({ ...r, label: r.label.trim(), target: r.target.trim() })).filter((r) => r.label || r.target);
+          const clean = rows.map((r) => ({ ...r, label: r.label.trim(), target: (r.target ?? '').trim() })).filter((r) => r.label || r.target || r.targetNum != null);
           proj(pid, (x) => ({ ...x, weekText: { ...x.weekText, [ws]: clean } }));
+        },
+        setWeekDates: (pid, oldStart, w) => {
+          const p = owns(pid);
+          if (!w.start || !w.end || w.end < w.start) throw new Error('A week must end on or after the day it starts.');
+          const others = (p.customWeeks ?? []).filter((x) => x.start !== oldStart);
+          if (others.some((x) => x.start <= w.end && w.start <= x.end)) throw new Error('Those days are already in another week.');
+          proj(pid, (x) => {
+            const weekPlans = { ...x.weekPlans };
+            const weekText = { ...x.weekText };
+            if (oldStart && oldStart !== w.start) {
+              if (weekPlans[oldStart]) { weekPlans[w.start] = weekPlans[oldStart]; delete weekPlans[oldStart]; }
+              if (weekText[oldStart]) { weekText[w.start] = weekText[oldStart]; delete weekText[oldStart]; }
+            }
+            return { ...x, customWeeks: [...others, w].sort((a, b) => a.start.localeCompare(b.start)), weekPlans, weekText };
+          });
+        },
+        removeWeek: (pid, start) => {
+          owns(pid);
+          proj(pid, (x) => {
+            const weekPlans = { ...x.weekPlans }; delete weekPlans[start];
+            const weekText = { ...x.weekText }; delete weekText[start];
+            return { ...x, customWeeks: (x.customWeeks ?? []).filter((w) => w.start !== start), weekPlans, weekText };
+          });
         },
         setWeekPlan: (pid, ws, metric, value) => {
           const mon = projectWeekStart(owns(pid), ws);
@@ -1136,7 +1164,7 @@ export const useStore = create<Data & Actions>()(
     },
     {
       name: 'ls-tracker-v2',
-      version: 15,
+      version: 16,
       // Old or unreadable saved data falls back to a fresh demo instead of crashing.
       migrate: () => seed() as never,
       merge: (persisted, current) => {

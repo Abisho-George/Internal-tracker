@@ -185,7 +185,11 @@ export const ZERO: Counts = {};
 /** A week the project manager set on the calendar (any days, e.g. Monday to Friday or Wednesday to Tuesday). */
 export interface CustomWeek { start: string; end: string }
 /** A written target for a week (for things that are not a number), with what actually happened. */
-export interface TextTarget { id: string; label: string; target: string; actual?: string }
+export interface TextTarget {
+  id: string; label: string; target: string; actual?: string;
+  /** Number (target/actual as numbers), milestone (actual is a status) or text. Older rows without a kind are text. */
+  kind?: 'number' | 'milestone' | 'text'; targetNum?: number; actualNum?: number; status?: string;
+}
 
 export interface Meeting { id: string; company: string; contact: string; date: string; time: string }
 

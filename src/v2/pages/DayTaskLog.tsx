@@ -342,7 +342,7 @@ export function TargetsProgress({ personId, date, kind, editable }: { personId: 
   const { projects, daily, weekly, saveWeekly } = useStore();
   const mon = weekStartOf(date);
   const list = kind === 'day' ? daily[`${personId}|${date}`]?.entries ?? [] : mergeWeek(personId, mon, daily, weekly[`${personId}|${mon}`]?.entries ?? [], weekly[`${personId}|${mon}`]?.overrides);
-  const setNum = (e: TaskEntry, patch: { qty?: number; doneQty?: number }) => {
+  const setNum = (e: TaskEntry, patch: { qty?: number; doneQty?: number; status?: MilestoneStatus; actualText?: string }) => {
     const rec = weekly[`${personId}|${mon}`];
     const k = mergeKey(e);
     saveWeekly(personId, mon, { overrides: { ...rec?.overrides, [k]: { ...rec?.overrides?.[k], qty: e.qty, doneQty: e.doneQty, ...patch } } });
@@ -383,7 +383,13 @@ export function TargetsProgress({ personId, date, kind, editable }: { personId: 
                 return (
                   <li key={e.id} className={cx('grid items-center gap-2 text-xs', editable ? 'grid-cols-[minmax(0,1fr)_8.5rem_minmax(4rem,8rem)_2.5rem]' : 'grid-cols-[minmax(0,1fr)_5rem_minmax(4rem,8rem)_2.5rem]')}>
                     <span className="truncate" title={e.desc}>{entryName(e, p)}{e.desc && <span className="text-muted"> · {e.desc}</span>}</span>
-                    {editable && (e.kind ?? 'number') === 'number' ? (
+                    {editable && e.kind === 'milestone' ? (
+                      <select aria-label={`${entryName(e, p)} status`} className="focus-ring rounded-md border border-line bg-surface px-1 py-0.5 text-xs font-semibold" value={e.status ?? 'Not started'} onChange={(x) => setNum(e, { status: x.target.value as MilestoneStatus })}>
+                        {MILESTONE_STATUS.map((st) => <option key={st}>{st}</option>)}
+                      </select>
+                    ) : editable && e.kind === 'text' ? (
+                      <TextCell label={`${entryName(e, p)} actual`} value={e.actualText ?? ''} onSave={(v) => setNum(e, { actualText: v })} />
+                    ) : editable && (e.kind ?? 'number') === 'number' ? (
                       <span className="flex items-center justify-end gap-0.5" data-edit-row={e.id}>
                         <NumCell label={`${entryName(e, p)} achieved`} value={e.doneQty ?? 0} onSave={(v) => setNum(e, { doneQty: v })} />
                         <span className="text-muted">/</span>
@@ -412,7 +418,7 @@ const WEEK_EDIT_EVENT = 'ls-edit-week';
  * the same task on several days is one row with the numbers added up.
  */
 export const mergeKey = (e: TaskEntry) => `${e.projectId}|${e.task}|${(e.custom ?? '').trim().toLowerCase()}|${e.kind ?? 'number'}`;
-export function mergeWeek(personId: string, mon: string, daily: ReturnType<typeof useStore.getState>['daily'], extra: TaskEntry[] = [], overrides: Record<string, { qty?: number; doneQty?: number }> = {}): TaskEntry[] {
+export function mergeWeek(personId: string, mon: string, daily: ReturnType<typeof useStore.getState>['daily'], extra: TaskEntry[] = [], overrides: Record<string, { qty?: number; doneQty?: number; status?: MilestoneStatus; actualText?: string; targetText?: string }> = {}): TaskEntry[] {
   const rows = [...[0, 1, 2, 3, 4].flatMap((i) => daily[`${personId}|${addDays(mon, i)}`]?.entries ?? []), ...extra];
   const out = new Map<string, TaskEntry>();
   rows.forEach((e) => {
@@ -434,6 +440,8 @@ export function mergeWeek(personId: string, mon: string, daily: ReturnType<typeo
     const o = overrides[k];
     if (o?.qty != null) m.qty = o.qty;
     if (o?.doneQty != null) m.doneQty = o.doneQty;
+    if (o?.status) m.status = o.status;
+    if (o?.actualText != null) m.actualText = o.actualText;
   });
   return [...out.values()];
 }
@@ -495,6 +503,16 @@ function NumCell({ value, onSave, label }: { value: number; onSave: (v: number) 
   );
 }
 
+/** Text you can click and change; saves when you leave the field or press Enter. */
+function TextCell({ value, onSave, label }: { value: string; onSave: (v: string) => void; label: string }) {
+  const [v, setV] = useState(value);
+  useEffect(() => { setV(value); }, [value]);
+  return (
+    <input aria-label={label} value={v} onChange={(e) => setV(e.target.value)} onBlur={() => v !== value && onSave(v)} onKeyDown={(e) => e.key === 'Enter' && (e.target as HTMLInputElement).blur()}
+      placeholder="What got done" className="focus-ring w-full rounded-md border border-line bg-surface px-1.5 py-0.5 text-xs" />
+  );
+}
+
 /** One simple row to add something to the week: project, task, target and achieved, then Add. Same task adds to its row. */
 function WeekAddRow({ personId, mon }: { personId: string; mon: string }) {
   const { projects, weekly, saveWeekly } = useStore();
@@ -505,19 +523,26 @@ function WeekAddRow({ personId, mon }: { personId: string; mon: string }) {
   const [custom, setCustom] = useState('');
   const [qty, setQty] = useState('');
   const [done, setDone] = useState('');
+  const [type, setType] = useState<EntryKind>('number');
+  const [tText, setTText] = useState('');
+  const [aText, setAText] = useState('');
+  const [status, setStatus] = useState<MilestoneStatus>('Not started');
   const opts = optionsFor(projects.find((p) => p.id === pid));
   const field = 'focus-ring rounded-lg border border-line bg-surface px-2 py-1.5 text-sm text-ink';
   const add = () => {
     if (!task) { toast({ title: 'Pick a task', tone: 'error' }); return; }
     if (task === CUSTOM && !custom.trim()) { toast({ title: 'Type the task name', tone: 'error' }); return; }
     const rec = weekly[`${personId}|${mon}`];
-    const e: TaskEntry = { id: newId(), projectId: pid, task, custom: task === CUSTOM ? custom.trim() : undefined, desc: '', estMin: 0, qty: qty ? Math.max(0, Math.round(+qty)) : undefined, doneQty: done ? Math.max(0, Math.round(+done)) : undefined, achieved: '', remarks: '' };
+    const base = { id: newId(), projectId: pid, task, custom: task === CUSTOM ? custom.trim() : undefined, desc: '', estMin: 0, achieved: '', remarks: '', kind: type };
+    const e: TaskEntry = type === 'number'
+      ? { ...base, qty: qty ? Math.max(0, Math.round(+qty)) : undefined, doneQty: done ? Math.max(0, Math.round(+done)) : undefined }
+      : type === 'milestone' ? { ...base, targetText: tText.trim(), status } : { ...base, targetText: tText.trim(), actualText: aText.trim() };
     // If that row's numbers were corrected by hand, add on top of the corrected numbers.
     const k = mergeKey(e);
     const o = rec?.overrides?.[k];
     const overrides = o ? { ...rec!.overrides, [k]: { qty: o.qty != null ? o.qty + (e.qty ?? 0) : undefined, doneQty: o.doneQty != null ? o.doneQty + (e.doneQty ?? 0) : undefined } } : rec?.overrides;
     saveWeekly(personId, mon, { entries: [...(rec?.entries ?? []), e], overrides });
-    setQty(''); setDone(''); setCustom('');
+    setQty(''); setDone(''); setCustom(''); setTText(''); setAText(''); setStatus('Not started');
     toast({ title: 'Added to the week', tone: 'success' });
   };
   return (
@@ -535,8 +560,20 @@ function WeekAddRow({ personId, mon }: { personId: string; mon: string }) {
         </select>
       </label>
       {task === CUSTOM && <label className="text-xs font-semibold text-muted">Name<input aria-label="Week custom task" autoFocus className={cx(field, 'mt-1 block w-40')} value={custom} onChange={(e) => setCustom(e.target.value)} placeholder="Task name" /></label>}
-      <label className="text-xs font-semibold text-muted">Target<input aria-label="Week target" type="number" min={0} className={cx(field, 'mt-1 block w-20 text-right')} value={qty} onChange={(e) => setQty(e.target.value)} placeholder="0" /></label>
-      <label className="text-xs font-semibold text-muted">Achieved<input aria-label="Week achieved" type="number" min={0} className={cx(field, 'mt-1 block w-20 text-right')} value={done} onChange={(e) => setDone(e.target.value)} placeholder="0" onKeyDown={(e) => e.key === 'Enter' && add()} /></label>
+      <label className="text-xs font-semibold text-muted">Type
+        <select aria-label="Week type" className={cx(field, 'mt-1 block w-32')} value={type} onChange={(e) => setType(e.target.value as EntryKind)}>
+          <option value="number"># Number</option><option value="milestone">☑ Milestone</option><option value="text">✎ Text</option>
+        </select>
+      </label>
+      {type === 'number' ? <>
+        <label className="text-xs font-semibold text-muted">Target<input aria-label="Week target" type="number" min={0} className={cx(field, 'mt-1 block w-20 text-right')} value={qty} onChange={(e) => setQty(e.target.value)} placeholder="0" /></label>
+        <label className="text-xs font-semibold text-muted">Achieved<input aria-label="Week achieved" type="number" min={0} className={cx(field, 'mt-1 block w-20 text-right')} value={done} onChange={(e) => setDone(e.target.value)} placeholder="0" onKeyDown={(e) => e.key === 'Enter' && add()} /></label>
+      </> : <>
+        <label className="text-xs font-semibold text-muted">Target<input aria-label="Week target text" className={cx(field, 'mt-1 block w-48')} value={tText} onChange={(e) => setTText(e.target.value)} placeholder={type === 'milestone' ? 'e.g. Proposal signed' : 'e.g. Refresh the model'} /></label>
+        {type === 'milestone'
+          ? <label className="text-xs font-semibold text-muted">Status<select aria-label="Week status" className={cx(field, 'mt-1 block w-36')} value={status} onChange={(e) => setStatus(e.target.value as MilestoneStatus)}>{MILESTONE_STATUS.map((st) => <option key={st}>{st}</option>)}</select></label>
+          : <label className="text-xs font-semibold text-muted">Actual<input aria-label="Week actual text" className={cx(field, 'mt-1 block w-48')} value={aText} onChange={(e) => setAText(e.target.value)} placeholder="What got done" onKeyDown={(e) => e.key === 'Enter' && add()} /></label>}
+      </>}
       <Btn onClick={add}><Plus size={14} /> Add</Btn>
       <p className="w-full text-[11px] text-muted">Click any number below to change it.</p>
     </div>

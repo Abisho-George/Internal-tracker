@@ -6,7 +6,7 @@ import { projectEodStatus } from '../analytics';
 import { first, nameOf, projectCounts, useStore } from '../store';
 import { Avatar, Btn, Card, Chip, PROJECT_COLORS, cx, input, safe } from '../ui';
 import { ProjectSetup } from './ProjectSetup';
-import { WeekCalendar, WeekTextTargets } from './WeekSetup';
+import { WeekExtraActuals, WeekFromDaily, WeekManager } from './WeekSetup';
 import { Timeline } from './Timeline';
 import { ProgressTrack, ProjectBlock, TargetsTable, progressTone, weekOptions } from './Widgets';
 
@@ -144,7 +144,6 @@ export function WeekPlanner({ p, date }: { p: Project; date?: string }) {
           </>
         )}
       </div>
-      <div className="mt-3"><WeekTextTargets p={p} ws={ws} canEdit mode="target" /></div>
     </div>
   );
 }
@@ -267,7 +266,8 @@ function WeekNumbers({ p, canEdit }: { p: Project; canEdit: boolean }) {
       </div>
       {err && <p role="alert" className="text-sm font-semibold text-coral-ink">{err}</p>}
 
-      <WeekTextTargets p={p} ws={projectWeekStart(p, today)} canEdit={canEdit} mode="actual" />
+      <WeekFromDaily p={p} />
+      <WeekExtraActuals p={p} canEdit={canEdit} />
 
       <div>
         {draftTarget && target && <p className="mb-2"><Chip tone="butter">Draft target</Chip></p>}
@@ -465,8 +465,7 @@ export function ProjectCard({ p, color }: { p: Project; color: string }) {
           </div>
         )}
         {active === 'targets' && manage && <>
-          <WeekCalendar p={p} />
-          <WeekPlanner p={p} />
+          <WeekManager p={p} />
           <div className="grid gap-4 lg:grid-cols-2"><TargetEditor p={p} period="week" /><TargetEditor p={p} period="month" /></div>
           <MetricManager p={p} />
         </>}
