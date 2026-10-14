@@ -320,34 +320,40 @@ export function parseDuration(raw: string): number | null {
   return NaN;
 }
 
-/** Text field for a duration (minutes or h:mm). Shows "1h 30m" once you leave it; red border when it can't be read. */
+/** A duration as two small fields: hours and minutes. Empty in both means no value; minutes over 59 roll into hours. */
 export function DurationInput({ value, onChange, placeholder, label, className, disabled }: {
   value?: number; onChange: (min: number | undefined) => void; placeholder?: string; label: string; className?: string; disabled?: boolean;
 }) {
-  const [text, setText] = useState(value != null ? fmtMin(value) : '');
-  const [bad, setBad] = useState(false);
+  const split = (v?: number) => (v != null ? { h: String(Math.floor(v / 60)), m: String(v % 60) } : { h: '', m: '' });
+  const [hm, setHm] = useState(() => split(value));
   const focused = useRef(false);
-  useEffect(() => {
-    if (!focused.current) { setText(value != null ? fmtMin(value) : ''); setBad(false); }
-  }, [value]);
+  useEffect(() => { if (!focused.current) setHm(split(value)); }, [value]);
+  const ph = placeholder != null && placeholder !== '...' ? parseDuration(placeholder) : null;
+  const phHm = ph != null && Number.isFinite(ph) ? split(ph) : { h: '0', m: '0' };
+  const update = (next: { h: string; m: string }) => {
+    setHm(next);
+    if (next.h.trim() === '' && next.m.trim() === '') { onChange(undefined); return; }
+    const total = Math.max(0, Math.round(+next.h || 0)) * 60 + Math.max(0, Math.round(+next.m || 0));
+    onChange(Math.min(720, total));
+  };
+  const box = '[appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none w-9 bg-transparent py-1 text-right text-sm tabular-nums text-ink outline-none placeholder:text-muted/60 disabled:text-muted';
   return (
-    <input aria-label={label} aria-invalid={bad || undefined} disabled={disabled} inputMode="text" placeholder={placeholder} title="Minutes or h:mm, e.g. 45m, 1h 30m or 1:30"
-      className={cx('focus-ring rounded-xl border bg-surface px-2 py-1 text-right text-sm tabular-nums text-ink placeholder:text-muted/70 disabled:bg-surface-2 disabled:text-muted', bad ? 'border-coral-strong' : 'border-line', className)}
-      value={text}
-      onFocus={() => { focused.current = true; }}
-      onChange={(e) => {
-        setText(e.target.value);
-        const n = parseDuration(e.target.value);
-        if (n === null) { setBad(false); onChange(undefined); return; }
-        const ok = Number.isFinite(n) && n >= 0 && n <= 720;
-        setBad(!ok);
-        if (ok) onChange(n);
-      }}
-      onBlur={() => {
-        focused.current = false;
-        const n = parseDuration(text);
-        if (n != null && Number.isFinite(n) && n >= 0 && n <= 720) setText(fmtMin(n));
-      }} />
+    <span role="group" aria-label={label} title="Hours and minutes"
+      className={cx('inline-flex shrink-0 items-center rounded-xl border border-line bg-surface px-1.5 focus-within:ring-2 focus-within:ring-accent/40', disabled && 'bg-surface-2', className, '!w-auto')}>
+      <input aria-label={`${label} hours`} type="number" min={0} max={12} inputMode="numeric" disabled={disabled} className={box} placeholder={phHm.h} value={hm.h}
+        onFocus={() => { focused.current = true; }} onBlur={() => { focused.current = false; }}
+        onChange={(e) => update({ ...hm, h: e.target.value })} />
+      <span className="px-0.5 text-xs font-semibold text-muted">h</span>
+      <input aria-label={`${label} minutes`} type="number" min={0} max={59} step={5} inputMode="numeric" disabled={disabled} className={box} placeholder={phHm.m} value={hm.m}
+        onFocus={() => { focused.current = true; }}
+        onBlur={() => {
+          focused.current = false;
+          const m = +hm.m || 0;
+          if (m > 59) { const h = (+hm.h || 0) + Math.floor(m / 60); setHm({ h: String(h), m: String(m % 60) }); }
+        }}
+        onChange={(e) => update({ ...hm, m: e.target.value })} />
+      <span className="pl-0.5 pr-1 text-xs font-semibold text-muted">m</span>
+    </span>
   );
 }
 
