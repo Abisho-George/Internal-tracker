@@ -16,6 +16,7 @@ const clock = (m: number) => `${String(Math.floor(m / 60)).padStart(2, '0')}:${S
 const LUNCH_LENGTHS = [30, 45, 60, 75, 90];
 const SPRING = { type: 'spring', stiffness: 520, damping: 38, mass: 0.8 } as const;
 let seq = 0;
+type Lane = 'plan' | 'extra';
 
 /** One block in the plan: a project (or a typed name) and how long. Times come from its place in the order. */
 export interface PlanItem { id: string; projectId: string; minutes: number; actual?: number; custom?: DayBlock['custom'] }
@@ -97,7 +98,7 @@ function LunchSetting({ personId, lunch, onChange }: { personId: string; lunch: 
  * Blocks line up from 10am around lunch; drag them along the line to reorder (the others slide out of the way
  * while you drag), or onto the bin to remove.
  */
-export function PlanBuilder({ plan, setPlan, extra, personId, date }: { plan: DayBlock[]; setPlan: (p: DayBlock[]) => void; extra: ExtraHours[]; personId: string; date: string }) {
+export function PlanBuilder({ plan, setPlan, extra, setExtra, personId, date }: { plan: DayBlock[]; setPlan: (p: DayBlock[]) => void; extra: ExtraHours[]; setExtra: (x: ExtraHours[]) => void; personId: string; date: string }) {
   const { projects, daily, profiles } = useStore();
   const reduce = useReducedMotion();
   const [lunch, setLunch] = useState<Lunch>(() => lunchOf(profiles, personId));
@@ -115,8 +116,9 @@ export function PlanBuilder({ plan, setPlan, extra, personId, date }: { plan: Da
   const [pid, setPid] = useState(active[0]?.id ?? '');
   const [customName, setCustomName] = useState('');
   const [mins, setMins] = useState<number | undefined>(60);
-  /** The block being dragged: where it was grabbed and where its start sits now, in working minutes (lunch left out). */
-  const [drag, setDrag] = useState<{ id: string; grab: number; work: number; x0: number; moved: boolean } | null>(null);
+  const [lane, setLane] = useState<Lane>('plan');
+  /** The block being dragged: its lane, where it was grabbed and where its start sits now (plan: working minutes with lunch left out; extra: minutes after the day's end). */
+  const [drag, setDrag] = useState<{ id: string; lane: Lane; grab: number; work: number; x0: number; moved: boolean } | null>(null);
   const [overTrash, setOverTrash] = useState(false);
   const lineRef = useRef<HTMLDivElement>(null);
   const trashRef = useRef<HTMLDivElement>(null);
@@ -133,34 +135,66 @@ export function PlanBuilder({ plan, setPlan, extra, personId, date }: { plan: Da
   const committed = useMemo(() => toPlan(items, lunch), [items, lunch]);
   const total = items.reduce((a, i) => a + i.minutes, 0);
   const endAt = committed.length ? toMinutes(committed[committed.length - 1].end) : DAY_START;
-  const span = Math.max(DAY_END, endAt) - DAY_START;
+  // Extra hours are blocks too: they line up straight after the working day (7pm, or later if the plan runs over).
+  const extraStart = Math.max(DAY_END, endAt);
+  const xItems = useMemo<PlanItem[]>(() => extra.map((x) => ({
+    id: x.id, projectId: x.projectId ?? `${OTHER}${x.work || 'Extra work'}`,
+    minutes: x.minutes || (x.start && x.end && x.end > x.start ? toMinutes(x.end) - toMinutes(x.start) : 0),
+  })).filter((x) => x.minutes > 0), [extra]);
+  const layExtra = (list: PlanItem[]): ExtraHours[] => {
+    let cur = extraStart;
+    return list.map((it) => {
+      const prev = extra.find((x) => x.id === it.id);
+      const real = !it.projectId.startsWith(OTHER);
+      const row: ExtraHours = { id: it.id, start: clock(cur), end: clock(cur + it.minutes), minutes: it.minutes, work: prev?.work || nameOf(it.projectId, undefined, projects), projectId: real ? it.projectId : undefined };
+      cur += it.minutes;
+      return row;
+    });
+  };
+  const xTotal = xItems.reduce((a, i) => a + i.minutes, 0);
+  // Keep saved extra hours flowing after the day (e.g. after the plan grows or an old row had other times).
+  useEffect(() => {
+    const next = layExtra(xItems);
+    const sigX = (xs: ExtraHours[]) => xs.map((x) => `${x.id}|${x.start}|${x.end}`).join(',');
+    if (sigX(next) !== sigX(extra.filter((x) => xItems.some((i) => i.id === x.id)))) setExtra(next);
+  }, [extraStart, xItems]); // eslint-disable-line react-hooks/exhaustive-deps
+  const span = Math.max(DAY_END, extraStart + xTotal) - DAY_START;
   const pct = (m: number) => `${((m - DAY_START) / span) * 100}%`;
   const commit = (next: PlanItem[]) => setPlan(toPlan(next, lunch));
-  const dragItem = drag ? items.find((x) => x.id === drag.id) : undefined;
+  const commitExtra = (next: PlanItem[]) => setExtra(layExtra(next));
+  const laneItems = (l: Lane) => (l === 'plan' ? items : xItems);
+  const dragItem = drag ? laneItems(drag.lane).find((x) => x.id === drag.id) : undefined;
 
-  // While dragging, the others make room where the block's middle is: they slide aside live.
-  const shown = useMemo(() => {
-    if (!drag || !dragItem || !drag.moved || overTrash) return items;
-    const others = items.filter((x) => x.id !== drag.id);
-    const centre = drag.work + dragItem.minutes / 2;
+  // While dragging, the others in that lane make room where the block's middle is: they slide aside live.
+  const preview = (l: Lane) => {
+    const list = laneItems(l);
+    if (!drag || drag.lane !== l || !dragItem || !drag.moved || overTrash) return list;
+    const others = list.filter((x) => x.id !== drag.id);
+    // Its leading edge decides: past the middle of a block, it takes that block's place.
+    const lead = drag.work + Math.min(dragItem.minutes, 30) / 2;
     let acc = 0;
     let at = others.length;
     for (let i = 0; i < others.length; i++) {
-      if (acc + others[i].minutes / 2 > centre) { at = i; break; }
+      if (acc + others[i].minutes / 2 > lead) { at = i; break; }
       acc += others[i].minutes;
     }
     return [...others.slice(0, at), dragItem, ...others.slice(at)];
-  }, [items, drag, dragItem, overTrash]);
+  };
+  const shown = preview('plan');
+  const shownX = preview('extra');
   const laid = useMemo(() => toPlan(shown, lunch), [shown, lunch]);
+  const laidX = layExtra(shownX);
 
   const add = () => {
     const name = customName.trim();
     if (pid === CUSTOM && !name) { toast({ title: 'Type the project name', tone: 'error' }); return; }
     if (!mins || mins < 5) { toast({ title: 'Type how long, e.g. 1h 30m', tone: 'error' }); return; }
-    commit([...items, { id: `pb${Date.now().toString(36)}${++seq}`, projectId: pid === CUSTOM ? `${OTHER}${name}` : pid, minutes: mins }]);
+    const it = { id: `${lane === 'plan' ? 'pb' : 'xb'}${Date.now().toString(36)}${++seq}`, projectId: pid === CUSTOM ? `${OTHER}${name}` : pid, minutes: mins };
+    if (lane === 'plan') commit([...items, it]);
+    else commitExtra([...xItems, it]);
     setCustomName('');
   };
-  const remove = (id: string) => commit(items.filter((x) => x.id !== id));
+  const remove = (id: string, l: Lane = 'plan') => (l === 'plan' ? commit(items.filter((x) => x.id !== id)) : commitExtra(xItems.filter((x) => x.id !== id)));
   const fillYesterday = () => {
     const prev = daily[`${personId}|${previousWorkingDay(date)}`]?.plan ?? [];
     if (!prev.length) { toast({ title: 'No plan saved on the previous working day', tone: 'info' }); return; }
@@ -168,40 +202,43 @@ export function PlanBuilder({ plan, setPlan, extra, personId, date }: { plan: Da
     toast({ title: 'Copied the previous day\'s blocks. Save to keep them.', tone: 'success' });
   };
 
-  const workAt = (clientX: number) => {
+  const workAt = (clientX: number, l: Lane) => {
     const r = lineRef.current!.getBoundingClientRect();
-    return toWork(DAY_START + ((clientX - r.left) / r.width) * span);
+    const c = DAY_START + ((clientX - r.left) / r.width) * span;
+    return l === 'plan' ? toWork(c) : c - extraStart;
   };
-  const startDrag = (e: ReactPointerEvent, id: string) => {
+  const startDrag = (e: ReactPointerEvent, id: string, l: Lane) => {
     if (e.button !== 0) return;
     e.preventDefault();
-    const first = committed.find((b) => b.id.split('~')[0] === id);
-    if (!first) return;
-    const start = toWork(toMinutes(first.start));
-    setDrag({ id, grab: workAt(e.clientX) - start, work: start, x0: e.clientX, moved: false });
+    const start = l === 'plan'
+      ? (() => { const first = committed.find((b) => b.id.split('~')[0] === id); return first ? toWork(toMinutes(first.start)) : null; })()
+      : (() => { const x = layExtra(xItems).find((b) => b.id === id); return x ? toMinutes(x.start!) - extraStart : null; })();
+    if (start == null) return;
+    setDrag({ id, lane: l, grab: workAt(e.clientX, l) - start, work: start, x0: e.clientX, moved: false });
   };
   // Follow the pointer anywhere on the page until it is released.
-  const live = useRef({ drag, shown, overTrash });
-  live.current = { drag, shown, overTrash };
+  const live = useRef({ drag, shown, shownX, overTrash });
+  live.current = { drag, shown, shownX, overTrash };
   useEffect(() => {
     if (!drag) return;
-    const maxWork = Math.max(toWork(DAY_START + span), total);
+    const maxWork = drag.lane === 'plan' ? Math.max(toWork(extraStart), total) : xTotal;
     const move = (e: PointerEvent) => {
       const d = live.current.drag;
       if (!d) return;
-      const it = items.find((x) => x.id === d.id);
+      const it = laneItems(d.lane).find((x) => x.id === d.id);
       if (!it) return;
       const moved = d.moved || Math.abs(e.clientX - d.x0) > 4;
-      const work = Math.round(Math.max(0, Math.min(maxWork - it.minutes, workAt(e.clientX) - d.grab)) / 5) * 5;
+      const work = Math.round(Math.max(0, Math.min(maxWork - it.minutes, workAt(e.clientX, d.lane) - d.grab)) / 5) * 5;
       const tr = trashRef.current?.getBoundingClientRect();
       setOverTrash(!!tr && e.clientX >= tr.left && e.clientX <= tr.right && e.clientY >= tr.top && e.clientY <= tr.bottom);
       setDrag({ ...d, work, moved });
     };
     const up = () => {
-      const { drag: d, shown: order, overTrash: trash } = live.current;
+      const { drag: d, shown: order, shownX: orderX, overTrash: trash } = live.current;
       if (d?.moved) {
-        if (trash) { remove(d.id); toast({ title: 'Block removed', tone: 'info' }); }
-        else commit(order);
+        if (trash) { remove(d.id, d.lane); toast({ title: d.lane === 'plan' ? 'Block removed' : 'Extra hours removed', tone: 'info' }); }
+        else if (d.lane === 'plan') commit(order);
+        else commitExtra(orderX);
       }
       setDrag(null);
       setOverTrash(false);
@@ -211,12 +248,20 @@ export function PlanBuilder({ plan, setPlan, extra, personId, date }: { plan: Da
     window.addEventListener('pointercancel', up, { once: true });
     return () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); window.removeEventListener('pointercancel', up); };
   }, [drag?.id]); // eslint-disable-line react-hooks/exhaustive-deps
-  const extraOnLine = extra.filter((x) => x.start && x.end && x.end > x.start);
   const t = reduce ? { duration: 0 } : SPRING;
 
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-end gap-2 rounded-xl bg-surface-2/60 p-3" aria-label="Add a block">
+        <div className="flex rounded-full bg-surface p-1 shadow-soft" role="tablist" aria-label="Block type">
+          {(['plan', 'extra'] as const).map((l) => (
+            <button key={l} role="tab" aria-selected={lane === l} onClick={() => setLane(l)}
+              className={cx('focus-ring relative rounded-full px-3 py-1 text-xs font-semibold transition-colors', lane === l ? (l === 'plan' ? 'text-accent-on' : 'text-white') : 'text-muted')}>
+              {lane === l && <motion.span layoutId="lane-pill" transition={SPRING} className={cx('absolute inset-0 rounded-full', l === 'plan' ? 'bg-accent' : 'bg-lavender-strong')} />}
+              <span className="relative">{l === 'plan' ? 'Plan' : 'Extra hours'}</span>
+            </button>
+          ))}
+        </div>
         <label className="text-xs font-semibold text-muted">Project
           <select aria-label="Block project" className="focus-ring mt-1 block w-56 rounded-xl border border-line bg-surface px-2 py-1.5 text-sm text-ink" value={pid} onChange={(e) => setPid(e.target.value)}>
             {active.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
@@ -233,7 +278,7 @@ export function PlanBuilder({ plan, setPlan, extra, personId, date }: { plan: Da
         <label className="text-xs font-semibold text-muted">Time
           <span className="mt-1 block"><DurationInput label="Block time" className="w-24" placeholder="1h 30m" value={mins} onChange={setMins} /></span>
         </label>
-        <Btn onClick={add}><Plus size={14} /> Add block</Btn>
+        <Btn onClick={add} className={lane === 'extra' ? '!bg-lavender-strong !text-white' : ''}><Plus size={14} /> {lane === 'plan' ? 'Add block' : 'Add extra hours'}</Btn>
         <span className="ml-auto flex flex-wrap gap-2">
           <Btn tone="ghost" className="border border-line bg-surface" onClick={fillYesterday}><Copy size={13} /> Fill from yesterday</Btn>
           <Btn tone="ghost" className="border border-line bg-surface" onClick={() => commit(toItems(defaultPlan(projects, personId)))}><Wand2 size={13} /> From my project hours</Btn>
@@ -262,7 +307,7 @@ export function PlanBuilder({ plan, setPlan, extra, personId, date }: { plan: Da
                   exit={reduce ? { opacity: 0 } : { opacity: 0, scale: 0.6, y: -14, transition: { duration: 0.22 } }}
                   transition={t}
                   whileHover={drag ? undefined : { y: -2, boxShadow: '0 8px 18px -6px rgb(0 0 0 / 0.35)' }}
-                  onPointerDown={(ev) => startDrag(ev, base)}
+                  onPointerDown={(ev) => startDrag(ev, base, 'plan')}
                   className={cx('absolute inset-y-1 cursor-grab touch-none select-none overflow-hidden rounded-lg text-[11px] font-semibold text-white', drag && 'cursor-grabbing', slot && '!bg-transparent border-2 border-dashed border-accent/60')}
                   style={{ background: slot ? undefined : colorFor(b.projectId, b.custom, projects), boxShadow: slot ? 'none' : '0 1px 2px rgb(0 0 0 / 0.15)' }}
                   title={`${nameOf(b.projectId, b.custom, projects)} · ${b.start} to ${b.end} · drag to move`}>
@@ -278,25 +323,48 @@ export function PlanBuilder({ plan, setPlan, extra, personId, date }: { plan: Da
             })}
           </AnimatePresence>
           {/* The block under the pointer: follows it exactly, and splits across lunch as it passes through. */}
-          {drag?.moved && dragItem && segments(drag.work, drag.work + dragItem.minutes).map((g, i) => (
+          {drag?.moved && dragItem && (drag.lane === 'plan' ? segments(drag.work, drag.work + dragItem.minutes) : [{ s: extraStart + drag.work, e: extraStart + drag.work + dragItem.minutes }]).map((g, i) => (
             <div key={i} data-drag-ghost className={cx('pointer-events-none absolute inset-y-0 z-30 flex items-center gap-1 overflow-hidden truncate rounded-lg px-2 text-[11px] font-semibold text-white shadow-[0_12px_28px_-8px_rgb(0_0_0/0.55)] ring-2 ring-white/90', overTrash && 'opacity-60 saturate-50')}
-              style={{ left: pct(g.s), width: `${((g.e - g.s) / span) * 100}%`, background: colorFor(dragItem.projectId, dragItem.custom, projects), transform: 'translateY(-3px) scale(1.03)' }}>
+              style={{ left: pct(g.s), width: `${((g.e - g.s) / span) * 100}%`, background: colorFor(dragItem.projectId, dragItem.custom, projects), backgroundImage: drag.lane === 'extra' ? 'repeating-linear-gradient(45deg, rgb(255 255 255 / 0.22) 0 6px, transparent 6px 12px)' : undefined, transform: 'translateY(-3px) scale(1.03)' }}>
               <GripVertical size={12} className="shrink-0 opacity-70" />
               <span className="truncate">{clock(g.s)} to {clock(g.e)}</span>
             </div>
           ))}
-          {extraOnLine.map((x) => {
-            const a = Math.max(DAY_START, toMinutes(x.start!));
-            const z = Math.min(DAY_START + span, toMinutes(x.end!));
-            if (z <= a) return null;
-            return <motion.div key={x.id} data-extra-block initial={{ scaleX: 0 }} animate={{ scaleX: 1 }} className="pointer-events-none absolute bottom-0 h-1.5 origin-left rounded-t bg-lavender-strong" style={{ left: pct(a), width: `${((z - a) / span) * 100}%` }} title={`Extra ${x.start} to ${x.end} · ${x.work}`} />;
-          })}
-          {!laid.length && <p className="absolute inset-0 flex items-center justify-center text-xs text-muted">Pick a project and a time above, then Add block</p>}
+          {/* Extra hours, after the working day */}
+          {xItems.length > 0 && <div className="pointer-events-none absolute inset-y-0 border-l-2 border-dashed border-lavender-strong/60" style={{ left: pct(extraStart) }} />}
+          <AnimatePresence initial={false}>
+            {laidX.map((x) => {
+              const s0 = toMinutes(x.start!);
+              const slot = drag?.moved && drag.id === x.id;
+              const it = shownX.find((i) => i.id === x.id)!;
+              return (
+                <motion.div key={x.id} data-extra-block={x.id}
+                  initial={reduce ? false : { opacity: 0, scaleY: 0.3, y: 10 }}
+                  animate={{ opacity: 1, scaleY: 1, y: 0, left: pct(s0), width: `${(x.minutes / span) * 100}%` }}
+                  exit={reduce ? { opacity: 0 } : { opacity: 0, scale: 0.6, y: -14, transition: { duration: 0.22 } }}
+                  transition={t}
+                  whileHover={drag ? undefined : { y: -2, boxShadow: '0 8px 18px -6px rgb(0 0 0 / 0.35)' }}
+                  onPointerDown={(ev) => startDrag(ev, x.id, 'extra')}
+                  className={cx('absolute inset-y-1 cursor-grab touch-none select-none overflow-hidden rounded-lg text-[11px] font-semibold text-white', slot && '!bg-transparent border-2 border-dashed border-lavender-strong')}
+                  style={slot ? undefined : { background: colorFor(it.projectId, undefined, projects), backgroundImage: 'repeating-linear-gradient(45deg, rgb(255 255 255 / 0.22) 0 6px, transparent 6px 12px)', boxShadow: 'inset 0 -4px 0 rgb(124 58 237 / 0.9)' }}
+                  title={`Extra hours · ${nameOf(it.projectId, undefined, projects)} · ${x.start} to ${x.end} · drag to move`}>
+                  {!slot && (
+                    <div className="flex h-full w-full items-center gap-1 truncate px-2">
+                      <span className="shrink-0 rounded bg-white/25 px-1 text-[9px] font-bold">EXTRA</span>
+                      <span className="truncate">{nameOf(it.projectId, undefined, projects)}</span>
+                      <span className="ml-auto shrink-0 rounded bg-black/15 px-1 tabular-nums">{fmtMin(x.minutes)}</span>
+                    </div>
+                  )}
+                </motion.div>
+              );
+            })}
+          </AnimatePresence>
+          {!laid.length && !laidX.length && <p className="absolute inset-0 flex items-center justify-center text-xs text-muted">Pick a project and a time above, then Add block</p>}
         </div>
         <div className="mt-1 flex justify-between px-1 text-[10px] text-faint">{Array.from({ length: Math.floor(span / 60) + 1 }, (_, i) => <span key={i}>{clock(DAY_START + i * 60).replace(':00', '')}</span>)}</div>
         <div className="mt-2 flex flex-wrap items-center gap-3 text-xs text-muted">
           <span>Planned <b className="text-ink">{fmtMin(total)}</b>{endAt > DAY_END && <span className="ml-1 font-semibold text-coral-ink">· runs past 7pm</span>}</span>
-          {extraOnLine.length > 0 && <span><span className="mr-1 inline-block h-2 w-3 rounded bg-lavender-strong align-middle" />Extra hours</span>}
+          {xTotal > 0 && <span><span className="mr-1 inline-block h-2 w-3 rounded bg-lavender-strong align-middle" />Extra hours <b className="text-ink">{fmtMin(xTotal)}</b></span>}
           <span>Drag a block along the line to reorder. Lunch stays put and blocks flow around it.</span>
           <motion.div ref={trashRef}
             animate={overTrash ? { scale: 1.12, rotate: [0, -6, 6, -4, 0] } : drag?.moved ? { scale: 1.04, rotate: 0 } : { scale: 1, rotate: 0 }}
@@ -308,7 +376,7 @@ export function PlanBuilder({ plan, setPlan, extra, personId, date }: { plan: Da
         </div>
       </div>
 
-      {items.length > 0 && (
+      {(items.length > 0 || xItems.length > 0) && (
         <ul className="divide-y divide-line overflow-hidden rounded-xl border border-line" aria-label="Blocks">
           <AnimatePresence initial={false}>
             {shown.map((it, i) => {
@@ -328,6 +396,23 @@ export function PlanBuilder({ plan, setPlan, extra, personId, date }: { plan: Da
                     <DurationInput label="Actual time" className="w-20" placeholder="..." value={it.actual} onChange={(m) => commit(items.map((x) => (x.id === it.id ? { ...x, actual: m ?? undefined } : x)))} />
                   </label>
                   <button aria-label="Remove block" className="focus-ring rounded-lg p-1.5 text-muted hover:bg-surface-2 hover:text-coral-ink" onClick={() => remove(it.id)}><Trash2 size={14} /></button>
+                </motion.li>
+              );
+            })}
+            {shownX.map((it) => {
+              const x = laidX.find((r) => r.id === it.id);
+              return (
+                <motion.li key={it.id} layout={!reduce} transition={t} initial={reduce ? false : { opacity: 0, x: -16 }} animate={{ opacity: drag?.moved && drag.id === it.id ? 0.5 : 1, x: 0 }} exit={{ opacity: 0, x: 24, height: 0 }}
+                  className="flex flex-wrap items-center gap-2 bg-lavender/20 px-3 py-2 text-sm" data-extra-row={it.id}>
+                  <span className="rounded bg-lavender-strong px-1.5 py-0.5 text-[9px] font-bold text-white">EXTRA</span>
+                  <span className="inline-block h-3 w-3 rounded-full" style={{ background: colorFor(it.projectId, undefined, projects) }} />
+                  <span className="min-w-[10rem] flex-1 font-semibold">{nameOf(it.projectId, undefined, projects)}
+                    <span className="block text-xs font-normal text-muted"><CalendarClock size={11} className="mr-1 inline" />{x?.start} to {x?.end}</span>
+                  </span>
+                  <label className="flex items-center gap-1 text-xs text-muted">Time
+                    <DurationInput label="Extra time" className="w-20" value={it.minutes} onChange={(m) => m && m >= 5 && commitExtra(xItems.map((y) => (y.id === it.id ? { ...y, minutes: m } : y)))} />
+                  </label>
+                  <button aria-label="Remove extra hours" className="focus-ring rounded-lg p-1.5 text-muted hover:bg-surface-2 hover:text-coral-ink" onClick={() => remove(it.id, 'extra')}><Trash2 size={14} /></button>
                 </motion.li>
               );
             })}

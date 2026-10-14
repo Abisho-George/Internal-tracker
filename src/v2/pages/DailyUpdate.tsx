@@ -116,41 +116,10 @@ export default function DailyUpdate() {
             <h2 className="text-base font-bold">Plan your day</h2>
             <HoursStats t={time} sent={sent} />
           </div>
-          <PlanBuilder plan={plan} setPlan={setPlan} extra={extra} personId={me} date={date} />
+          <PlanBuilder plan={plan} setPlan={setPlan} extra={extra} setExtra={setExtra} personId={me} date={date} />
 
-          <div className="mt-6 border-t border-line pt-4" aria-label="Extra hours" role="group">
-            <div className="flex flex-wrap items-baseline justify-between gap-2">
-              <p className="text-sm font-bold">Extra hours</p>
-              <p className="text-xs text-muted">Worked outside your plan? Add the time (start and end, or just how long) and what it was for.</p>
-            </div>
-            {extra.length > 0 && (
-              <div className="mt-3 space-y-2">
-                <div className="hidden items-center gap-2 px-1 text-[11px] font-semibold uppercase tracking-wide text-muted sm:flex" aria-hidden>
-                  <span className="w-[7.75rem]">From</span><span className="w-[7.75rem]">To</span><span className="w-20 text-right">Time</span>
-                  <span className="min-w-[12rem] flex-1">What you worked on</span><span className="w-44">Project</span><span className="w-8" />
-                </div>
-                {extra.map((x) => {
-                  const fixed = span(x.start, x.end) != null;
-                  return (
-                    <div key={x.id} data-extra={x.id} className="flex flex-wrap items-center gap-2 rounded-xl bg-surface-2/60 p-1">
-                      <input aria-label="Extra start" type="time" step={300} className={cx(field, 'w-[7.75rem]')} value={x.start ?? ''} onChange={(e) => updX(x.id, { start: e.target.value || undefined })} />
-                      <input aria-label="Extra end" type="time" step={300} className={cx(field, 'w-[7.75rem]')} value={x.end ?? ''} onChange={(e) => updX(x.id, { end: e.target.value || undefined })} />
-                      <DurationInput label="Extra duration" className="w-20" placeholder="45m" disabled={fixed} value={x.minutes || undefined} onChange={(m) => updX(x.id, { minutes: m ?? 0 })} />
-                      <input aria-label="Extra work" className={cx(field, 'min-w-[12rem] flex-1')} placeholder="e.g. Call list cleanup before the shift" value={x.work} onChange={(e) => updX(x.id, { work: e.target.value })} />
-                      <select aria-label="Extra project" className={cx(field, 'w-44')} value={x.projectId ?? ''} onChange={(e) => updX(x.id, { projectId: e.target.value || undefined })}>
-                        <option value="">No project</option>
-                        {myProjects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-                      </select>
-                      <button aria-label="Remove extra hours" className="focus-ring w-8 rounded-lg p-1.5 text-muted hover:bg-surface hover:text-coral-ink" onClick={() => setExtra((r) => r.filter((y) => y.id !== x.id))}><Trash2 size={15} /></button>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-            <div className="mt-3 flex flex-wrap items-center gap-2">
-              <Btn tone="soft" onClick={addExtra}><Clock3 size={14} /> Add extra hours</Btn>
-              <Btn className="ml-auto" onClick={() => safe(() => { saveDaily(me, date, { plan, extra: cleanExtra(extra) }); resync(); toast({ title: 'Plan and times saved', tone: 'success' }); })}>Save plan and times</Btn>
-            </div>
+          <div className="mt-4 flex justify-end">
+            <Btn onClick={() => safe(() => { saveDaily(me, date, { plan, extra: cleanExtra(extra) }); resync(); toast({ title: 'Plan and times saved', tone: 'success' }); })}>Save plan and times</Btn>
           </div>
         </Card>
       </section>
