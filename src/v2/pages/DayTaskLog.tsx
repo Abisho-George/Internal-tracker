@@ -169,6 +169,21 @@ export default function DayTaskLog({ personId, date, plan, extra, readOnly, kind
   };
 
   const upd = (id: string, p: Partial<TaskEntry>) => setRows((r) => r.map((e) => (e.id === id ? { ...e, ...p } : e)));
+  // Estimated time fills itself from the project's block: what's left after the times typed by hand, shared by the rest.
+  useEffect(() => {
+    if (kind !== 'day' || !edit) return;
+    const next = rows.map((e) => ({ ...e }));
+    groups.forEach(({ pid, planned }) => {
+      if (!planned) return;
+      const mine = next.filter((e) => e.projectId === pid);
+      const auto = mine.filter((e) => !e.estManual);
+      if (!auto.length) return;
+      const left = Math.max(0, planned - mine.filter((e) => e.estManual).reduce((a, e) => a + e.estMin, 0));
+      const each = Math.floor(left / auto.length / 5) * 5;
+      auto.forEach((e, i) => { e.estMin = i === auto.length - 1 ? left - each * (auto.length - 1) : each; });
+    });
+    if (next.some((e, i) => e.estMin !== rows[i].estMin)) setRows(next);
+  }, [rows, groups, kind, edit]); // eslint-disable-line react-hooks/exhaustive-deps
   const fillFromPrev = (pid: string) => {
     const from = prev.filter((e) => e.projectId === pid);
     if (!from.length) { toast({ title: `Nothing saved for this project ${kind === 'day' ? 'on the previous day' : 'last week'}`, tone: 'info' }); return; }
@@ -310,7 +325,7 @@ export default function DayTaskLog({ personId, date, plan, extra, readOnly, kind
                                 : (ro ? <span>{e.actualText || '·'}</span> : <input aria-label="Actual" className={field} placeholder="What got done" value={e.actualText ?? ''} onChange={(x) => upd(e.id, { actualText: x.target.value })} />)}
                           </td>
                           <td className="px-2 py-2">{!edit ? <span className="tabular-nums">{fmtMin(e.estMin)}</span>
-                            : <DurationInput label="Estimated time" placeholder="1h" value={e.estMin || undefined} onChange={(m) => upd(e.id, { estMin: m ?? 0 })} />}</td>
+                            : <DurationInput label="Estimated time" placeholder="1h" value={e.estMin || undefined} onChange={(m) => upd(e.id, { estMin: m ?? 0, estManual: m != null })} />}</td>
                           <td className="px-2 py-2">{ro ? <span className="tabular-nums">{e.actualMin != null ? fmtMin(e.actualMin) : '·'}</span>
                             : <DurationInput label="Actual time" placeholder="..." value={e.actualMin} onChange={(m) => upd(e.id, { actualMin: m ?? undefined })} />}</td>
                           <td className="px-2 py-2">{ro ? <span>{e.remarks || '·'}</span>

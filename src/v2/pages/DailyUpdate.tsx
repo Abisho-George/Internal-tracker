@@ -1,11 +1,11 @@
 import { fmtDay } from '../data';
 import { useEffect, useMemo, useState } from 'react';
-import {  Lock } from 'lucide-react';
+import { Lock, Pencil } from 'lucide-react';
 import { toast } from '@/components';
 
 import { dayTime } from '../analytics';
 import {  emptyDaily, useStore, type CustomRow, type DayBlock, type ExtraHours, type ProjectNumbers , leaveOn } from '../store';
-import { Btn, Card, cx, input, safe } from '../ui';
+import { Btn, Card, Chip, cx, input, safe } from '../ui';
 import { colorOf } from './Widgets';
 import { AUTO_METRICS, CustomRows, DateNav, HoursStats, lastWorkingDay, NoteView } from './DailyViews';
 import { PlanBuilder } from './PlanBuilder';
@@ -44,6 +44,7 @@ export default function DailyUpdate() {
   const { me, tasks, daily, saveDaily, profiles } = useStore();
   const [date, setDate] = useState(lastWorkingDay);
   const leaveToday = leaveOn(profiles, me, date);
+  const planLocked = !!daily[`${me}|${date}`]?.planAt;
   const key = `${me}|${date}`;
   const saved = daily[key] ?? emptyDaily();
   const [plan, setPlan] = useState<DayBlock[]>(saved.plan);
@@ -90,10 +91,17 @@ export default function DailyUpdate() {
             <h2 className="text-base font-bold">Plan your day</h2>
             <HoursStats t={time} sent={sent} />
           </div>
-          <PlanBuilder plan={plan} setPlan={setPlan} extra={extra} setExtra={setExtra} personId={me} date={date} />
+          <div className={cx('relative', planLocked && 'pointer-events-none select-none opacity-70')} aria-disabled={planLocked}>
+            <PlanBuilder plan={plan} setPlan={setPlan} extra={extra} setExtra={setExtra} personId={me} date={date} />
+          </div>
 
           <div className="mt-4 flex justify-end">
-            <Btn onClick={() => safe(() => { saveDaily(me, date, { plan, extra: cleanExtra(extra) }); resync(); toast({ title: 'Plan and times saved', tone: 'success' }); })}>Save plan and times</Btn>
+            {planLocked ? (
+              <span className="flex items-center gap-2" data-testid="plan-locked">
+                <Chip tone="mint"><Lock size={11} /> Locked {new Date(saved.planAt!).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</Chip>
+                <Btn tone="ghost" className="border border-line" onClick={() => safe(() => saveDaily(me, date, { planAt: undefined }))}><Pencil size={13} /> Update</Btn>
+              </span>
+            ) : <Btn onClick={() => safe(() => { saveDaily(me, date, { plan, extra: cleanExtra(extra), planAt: new Date().toISOString() }); resync(); toast({ title: 'Plan and times saved and locked 🔒', tone: 'success' }); })}><Lock size={13} /> Save plan and times</Btn>}
           </div>
         </Card>
       </section>

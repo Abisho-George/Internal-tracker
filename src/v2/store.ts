@@ -116,6 +116,8 @@ export interface DayBlock {
 export interface ExtraHours { id: string; start?: string; end?: string; minutes: number; work: string; projectId?: string }
 export type ProjectNumbers = Record<string, Record<string, number>>; // projectId -> metricId -> value
 export interface DailyUpdate {
+  /** Plan and times locked (Save plan and times); Update unlocks. */
+  planAt?: string;
   plan: DayBlock[];
   sodNote: string;
   sodTargets: ProjectNumbers;
@@ -148,6 +150,8 @@ export interface TaskEntry {
   qty?: number; doneQty?: number;
   /** The assigned task this row came from (its achieved number is what was approved), and whether it carried over from an earlier day. */
   taskId?: string; carried?: boolean;
+  /** Estimated time typed by hand (otherwise it is filled in from the block's time left over). */
+  estManual?: boolean;
   /** What kind of target: a number (default), a milestone with a status, or free text. */
   kind?: EntryKind; targetText?: string; actualText?: string; status?: MilestoneStatus;
   achieved: string; remarks: string;
@@ -612,7 +616,7 @@ export function withAssigned(rec: DailyUpdate | undefined, tasks: Task[], person
   const fresh = mine.filter((t) => !have.has(t.id));
   if (!fresh.length) return null;
   const rows: TaskEntry[] = fresh.map((t) => ({
-    id: `tk-${t.id}`, projectId: t.projectId, ...entryTask(t), desc: t.title, qty: t.qty, estMin: t.targetMinutes, kind: 'number',
+    id: `tk-${t.id}`, projectId: t.projectId, ...entryTask(t), desc: t.title, qty: t.qty, estMin: t.targetMinutes, estManual: true, kind: 'number',
     doneQty: t.status === 'done' ? t.doneQty : undefined, achieved: '', remarks: '', taskId: t.id, carried: t.date < date,
   }));
   // A block for every project that has new tasks but no time in the plan yet.
