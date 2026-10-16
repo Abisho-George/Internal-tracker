@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { BellRing, Gauge, History, Pencil, Plus, Send, ShoppingBasket, Star, Trash2 } from 'lucide-react';
 import { toast } from '@/components';
 import {
-  canManage, day, findCustomStandard, fmtDay, isAdmin, isLeadRole, isOwner, parseDay, PEOPLE, previousWorkingDay, standardFor, TASK_TYPES, taskTitle,
+  canManage, typesFor, day, findCustomStandard, fmtDay, isAdmin, isLeadRole, isOwner, parseDay, PEOPLE, previousWorkingDay, standardFor, TASK_TYPES, taskTitle,
   type Project, type Task,
 } from '../data';
 import { difficulty, type Difficulty } from '../analytics';
@@ -238,7 +238,7 @@ export default function Assign() {
             <div>
               <p className="mb-1.5 text-xs font-bold uppercase text-muted">Task</p>
               <div className="flex flex-wrap gap-2">
-                {TASK_TYPES.map((t) => (
+                {typesFor(project).map((t) => (
                   <Btn key={t.id} tone={t.id === typeKey ? 'primary' : 'ghost'} className="border border-line" onClick={() => { setTypeId(t.id); setTargetEdited(false); setQty(t.id === 'deck' ? 1 : t.id === 'model' ? 10 : 30); }}>{t.name}</Btn>
                 ))}
                 <Btn tone={typeKey === 'custom' ? 'primary' : 'ghost'} className="border border-dashed border-line" onClick={() => { setTypeId('custom'); setTargetEdited(true); }}>+ Custom task</Btn>

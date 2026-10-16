@@ -252,6 +252,10 @@ export interface Project {
   updates: { id: string; text: string; at: string; by: string }[];
   /** Project-specific standard minutes per unit (used for target times and on-time %). */
   standards?: Standards;
+  /** Minutes per unit for the other built-in task types on this project (prospect / L1 / L2 live in standards). */
+  typeMinutes?: Record<string, number>;
+  /** Built-in task types that don't apply to this project (hidden in Assign and the daily update). */
+  typesOff?: string[];
   /** Extra project-specific task types with their own standard time. They show up as task types in Assign. */
   customStandards: CustomStandard[];
   /** Days whose numbers are finalised (yyyy-MM-dd to ISO time). Set when end-of-day updates are sent or the owner finalises. */
@@ -495,13 +499,17 @@ export function findCustomStandard(p: Pick<Project, 'customStandards'> | undefin
  * Custom tasks use the project custom standard (by `customStandardId`, or `typeId` if it is a custom standard id);
  * returns null for a custom task with no matching custom standard (callers fall back to the target time).
  */
-export function standardFor(project: Pick<Project, 'standards' | 'customStandards'> | undefined, typeId: string, qty: number, variant?: string, customStandardId?: string): number | null {
+export function standardFor(project: (Pick<Project, 'standards' | 'customStandards'> & Partial<Pick<Project, 'typeMinutes'>>) | undefined, typeId: string, qty: number, variant?: string, customStandardId?: string): number | null {
   if (typeId === 'custom' || !TASK_TYPES.some((x) => x.id === typeId)) {
     const cs = findCustomStandard(project, customStandardId ?? (typeId === 'custom' ? undefined : typeId));
     return cs ? Math.max(1, Math.round(cs.minutes * qty)) : null;
   }
+  const per = project?.typeMinutes?.[typeId];
+  if (per && !['prospect', 'l1', 'l2'].includes(typeId)) return Math.max(1, Math.round(per * qty));
   return targetFor(typeId, qty, variant, project?.standards ? { ...DEFAULT_STANDARDS, ...project.standards } : undefined);
 }
+/** Built-in task types that apply to a project (all of them unless some were removed). */
+export const typesFor = (p?: Pick<Project, 'typesOff'>) => TASK_TYPES.filter((t) => !p?.typesOff?.includes(t.id));
 
 export function taskTitle(typeId: string, qty: number, variant?: string): string {
   const type = TASK_TYPES.find((x) => x.id === typeId);

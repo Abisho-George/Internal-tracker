@@ -1,15 +1,13 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { ArrowRightLeft, Crown, Plus, ShieldCheck, Trash, X } from 'lucide-react';
 import { Modal, toast } from '@/components';
-import { day, DEFAULT_STANDARDS, isLeadRole, PEOPLE, projectWeeks, roleOfPerson, type Counts, type Project, type Standards } from '../data';
+import { day, DEFAULT_STANDARDS, isLeadRole, PEOPLE, projectWeeks, roleOfPerson, TASK_TYPES, type Counts, type Project, type Standards } from '../data';
 import { first, nameOf, useStore, type CustomStandardInput, type TransferMode } from '../store';
 import { Avatar, Btn, cx, fmtMin, input, safe } from '../ui';
 
-const STD_FIELDS: { key: keyof Standards; label: string; hint: string }[] = [
-  { key: 'prospect', label: 'Prospect mapping', hint: 'minutes per prospect' },
-  { key: 'l1', label: '1st level message', hint: 'minutes per personalised message (semi = ⅔, templated = ½)' },
-  { key: 'l2', label: '2nd level message', hint: 'minutes per message' },
-];
+/** Default minutes per unit for every built-in task type. */
+const DEFAULT_TYPE_MIN: Record<string, string> = Object.fromEntries(TASK_TYPES.map((t) => [t.id, String(t.perUnit)]));
+const STD_HINT: Record<string, string> = { prospect: 'minutes per prospect', l1: 'minutes per personalised message (semi = ⅔, templated = ½)', l2: 'minutes per message' };
 
 /** Number fields that stay readable in every theme: explicit surface background, ink text, big digits. */
 const numField = 'focus-ring rounded-lg border-2 border-line bg-surface px-2 py-1 font-extrabold tabular-nums text-ink outline-none placeholder:font-normal placeholder:text-faint focus:border-accent';
@@ -61,7 +59,8 @@ export function ProjectSetup({ open, onClose, edit }: { open: boolean; onClose: 
   const [startDate, setStart] = useState(day(0));
   const [endDate, setEnd] = useState(day(90));
   const [team, setTeam] = useState<TeamRow[]>([]);
-  const [std, setStd] = useState<Record<keyof Standards, string>>({ prospect: '2', l1: '2', l2: '1.5' });
+  const [std, setStd] = useState<Record<string, string>>(DEFAULT_TYPE_MIN);
+  const [off, setOff] = useState<string[]>([]);
   const [custom, setCustom] = useState<CsRow[]>([]);
   const [draftCs, setDraftCs] = useState({ name: '', unit: '', minutes: '' });
   const [admins, setAdmins] = useState<string[]>([]);
@@ -80,7 +79,8 @@ export function ProjectSetup({ open, onClose, edit }: { open: boolean; onClose: 
       const ids = [...new Set([...Object.keys(edit.hours), ...edit.teamIds])];
       setTeam(ids.map((id) => ({ id, h: String(edit.hours[id] ?? 0) })));
       const s = { ...DEFAULT_STANDARDS, ...edit.standards };
-      setStd({ prospect: String(s.prospect), l1: String(s.l1), l2: String(s.l2) });
+      setStd({ ...DEFAULT_TYPE_MIN, ...Object.fromEntries(Object.entries(edit.typeMinutes ?? {}).map(([k, v]) => [k, String(v)])), prospect: String(s.prospect), l1: String(s.l1), l2: String(s.l2) });
+      setOff(edit.typesOff ?? []);
       setCustom((edit.customStandards ?? []).map((c) => ({ key: c.id, id: c.id, name: c.name, unit: c.unit, minutes: String(c.minutes) })));
       setAdmins(edit.admins ?? []);
     }
@@ -90,7 +90,7 @@ export function ProjectSetup({ open, onClose, edit }: { open: boolean; onClose: 
 
   const resetCreate = () => {
     setWeekT({}); setPlans({});
-    setName(''); setClient(''); setDescription(''); setTeam([]); setStd({ prospect: '2', l1: '2', l2: '1.5' }); setCustom([]); setAdmins([]); setErr('');
+    setName(''); setClient(''); setDescription(''); setTeam([]); setStd(DEFAULT_TYPE_MIN); setOff([]); setCustom([]); setAdmins([]); setErr('');
   };
 
   const addCustom = () => {
@@ -106,11 +106,12 @@ export function ProjectSetup({ open, onClose, edit }: { open: boolean; onClose: 
 
   /** Turns the typed fields into store values; throws a friendly error if something is off. */
   const collect = () => {
-    const standards = Object.fromEntries(STD_FIELDS.map((f) => {
-      const v = num(std[f.key]);
-      if (!(v > 0)) throw new Error(`Set the standard time for ${f.label.toLowerCase()} (above 0 minutes).`);
-      return [f.key, v];
-    })) as unknown as Standards;
+    const on = TASK_TYPES.filter((t) => !off.includes(t.id));
+    on.forEach((t) => { if (!(num(std[t.id]) > 0)) throw new Error(`Set the standard time for ${t.name.toLowerCase()} (above 0 minutes), or remove it.`); });
+    const pick = (k: keyof Standards) => (num(std[k]) > 0 ? num(std[k]) : DEFAULT_STANDARDS[k]);
+    const standards: Standards = { prospect: pick('prospect'), l1: pick('l1'), l2: pick('l2') };
+    const typeMinutes = Object.fromEntries(on.filter((t) => !['prospect', 'l1', 'l2'].includes(t.id)).map((t) => [t.id, num(std[t.id])]));
+    const typesOff = [...off];
     const hours: Record<string, number> = {};
     team.forEach((r) => {
       if (!r.h.trim()) throw new Error(`Type the hours per day for ${first(r.id)} (for example 1.5).`);
@@ -119,7 +120,7 @@ export function ProjectSetup({ open, onClose, edit }: { open: boolean; onClose: 
       hours[r.id] = v;
     });
     const customStandards: CustomStandardInput[] = custom.map((c) => ({ id: c.id, name: c.name, unit: c.unit, minutes: num(c.minutes) }));
-    return { standards, hours, customStandards };
+    return { standards, typeMinutes, typesOff, hours, customStandards };
   };
 
   const submit = () => {
@@ -195,19 +196,28 @@ export function ProjectSetup({ open, onClose, edit }: { open: boolean; onClose: 
       </div>
 
 
-      <Section icon={<span>⏱️</span>} title="Standard time for this project" hint="Every target time and on-time % for this project is measured against these. Different projects can have different standards.">
-        <div className="grid gap-3 sm:grid-cols-3">
-          {STD_FIELDS.map((f) => (
-            <label key={f.key} className="rounded-xl border border-line bg-surface p-3 text-sm text-ink">
-              <span className="font-semibold">{f.label}</span>
-              <span className="mt-1.5 flex items-baseline gap-1.5">
-                <input type="number" inputMode="decimal" min={0.1} step={0.1} aria-label={`${f.label} standard minutes`} className={cx(numField, 'w-24 text-2xl')} value={std[f.key]} onChange={(e) => setStd({ ...std, [f.key]: e.target.value })} />
-                <span className="text-sm font-semibold text-muted">min</span>
+      <Section icon={<span>⏱️</span>} title="Standard time for this project" hint="Every target time and on-time % for this project is measured against these. Change any time, or remove the ones this project does not use (you can add them back).">
+        <ul className="divide-y divide-line overflow-hidden rounded-xl border border-line bg-surface" aria-label="Standard times" data-testid="std-list">
+          {TASK_TYPES.filter((t) => !off.includes(t.id)).map((t) => (
+            <li key={t.id} className="flex flex-wrap items-center gap-3 px-3 py-2" data-std={t.id}>
+              <span className="min-w-[10rem] flex-1 text-sm font-semibold text-ink">{t.name}<span className="block text-[11px] font-normal text-muted">{STD_HINT[t.id] ?? `minutes per ${t.unit.replace(/s$/, '')}`}</span></span>
+              <span className="flex items-baseline gap-1.5">
+                <input type="number" inputMode="decimal" min={0.1} step={0.1} aria-label={`${t.name} standard minutes`} className={cx(numField, 'w-20 text-lg')} value={std[t.id] ?? ''} onChange={(e) => setStd({ ...std, [t.id]: e.target.value })} />
+                <span className="w-28 text-xs text-muted">min{num(std[t.id]) > 0 ? ` · ${perHour(num(std[t.id]))}` : ''}</span>
               </span>
-              <span className="mt-1 block text-[11px] text-muted">{f.hint}{num(std[f.key]) > 0 ? ` · ${perHour(num(std[f.key]))}` : ''}</span>
-            </label>
+              <button type="button" aria-label={`Remove ${t.name}`} title="Not used on this project" className="focus-ring rounded-lg p-2 text-muted hover:bg-coral hover:text-coral-ink" onClick={() => setOff((o) => [...o, t.id])}><Trash size={15} /></button>
+            </li>
           ))}
-        </div>
+        </ul>
+        {off.length > 0 && (
+          <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
+            <span className="text-muted">Removed from this project:</span>
+            {off.map((id) => {
+              const t = TASK_TYPES.find((x) => x.id === id);
+              return t ? <button type="button" key={id} className="focus-ring inline-flex items-center gap-1 rounded-full border border-line px-2.5 py-0.5 font-semibold text-accent-ink hover:bg-surface-2" onClick={() => setOff((o) => o.filter((x) => x !== id))}><Plus size={11} /> {t.name}</button> : null;
+            })}
+          </div>
+        )}
       </Section>
 
       <Section icon={<span>🧩</span>} title="Custom standard tasks" hint="Project-specific tasks with their own standard time, e.g. LinkedIn connection request at 0.5 min each. They show up as task types in Assign for this project.">

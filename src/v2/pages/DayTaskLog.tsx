@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
-import { CalendarRange, Check, CheckSquare, ChevronDown, FileText, Hash, ClipboardList, Copy, Lock, Pencil, Plus, Save, Send, Trash2, X } from 'lucide-react';
-import { toast } from '@/components';
-import { addDays, canManage, fmtDay, previousWorkingDay, TASK_TYPES, toMinutes, weekStartOf, type Project } from '../data';
+import { CalendarRange, Check, CheckSquare, ChevronDown, FileText, Hash, ClipboardList, Copy, Lock, Pencil, Plus, Save, Send, Settings2, Trash2, X } from 'lucide-react';
+import { Modal, toast } from '@/components';
+import { addDays, canManage, fmtDay, previousWorkingDay, typesFor, TASK_TYPES, toMinutes, weekStartOf, type Project } from '../data';
 import { emptyDaily, emptyWeekly, useStore, type DayBlock, type ExtraHours, type TaskEntry, type EntryKind, type MilestoneStatus, MILESTONE_STATUS } from '../store';
 import { Bar, Btn, Card, Chip, cx, fmtMin, safe } from '../ui';
 import { colorOf } from './Widgets';
@@ -22,7 +22,14 @@ const blockMin = (b: DayBlock) => Math.max(0, toMinutes(b.end) - toMinutes(b.sta
 const newId = () => `e${Date.now().toString(36)}${eid++}`;
 const blank = (projectId: string): TaskEntry => ({ id: newId(), projectId, task: '', desc: '', estMin: 0, achieved: '', remarks: '' });
 const optionsFor = (p?: Project) => [...TASK_TYPES.map((t) => ({ id: t.id, name: t.name })), ...(p?.customStandards ?? []).map((c) => ({ id: `std:${c.id}`, name: c.name }))];
-export const entryName = (e: TaskEntry, p?: Project) => (e.task === CUSTOM ? e.custom || 'Custom task' : optionsFor(p).find((o) => o.id === e.task)?.name ?? e.task);
+export const entryName = (e: TaskEntry, p?: Project) => (e.task === CUSTOM ? e.custom || 'Custom task' : e.task.startsWith(MY) ? e.task.slice(MY.length) : optionsFor(p).find((o) => o.id === e.task)?.name ?? e.task);
+/** Options a person picks from in the daily update: the project's task types (minus ones the project removed), their own extras, minus what they hid. */
+const MY = 'my:';
+export function menuFor(p: Project | undefined, menu?: { hidden: string[]; extra: string[] }) {
+  const base = [...typesFor(p).map((t) => ({ id: t.id, name: t.name })), ...(p?.customStandards ?? []).map((c) => ({ id: `std:${c.id}`, name: c.name }))];
+  const mine = (menu?.extra ?? []).map((n) => ({ id: `${MY}${n}`, name: n }));
+  return [...base, ...mine].filter((o) => !menu?.hidden.includes(o.id));
+}
 const sameTask = (a: TaskEntry, b: TaskEntry) => a.projectId === b.projectId && a.task === b.task && (a.task !== CUSTOM || (a.custom ?? '').trim().toLowerCase() === (b.custom ?? '').trim().toLowerCase());
 const STATUS_TONE: Record<MilestoneStatus, string> = { 'Not started': '', 'In progress': '!bg-sky/50 !text-sky-ink', Completed: '!bg-mint/60 !text-mint-ink', Blocked: '!bg-coral/60 !text-coral-ink' };
 const KINDS: { id: EntryKind; label: string; icon: typeof Hash; tone: string }[] = [
@@ -72,7 +79,9 @@ export function weekDone(e: TaskEntry, personId: string, mon: string, daily: Ret
  * achieved, remarks) with totals. Daily tables come from the plan's blocks; weekly ones from the person's projects.
  */
 export default function DayTaskLog({ personId, date, plan, extra, readOnly, kind = 'day' }: { personId: string; date: string; plan?: DayBlock[]; extra?: ExtraHours[]; readOnly?: boolean; kind?: LogKind }) {
-  const { projects, daily } = useStore();
+  const { projects, daily, profiles } = useStore();
+  const myMenu = profiles[personId]?.taskMenu;
+  const [menuOpen, setMenuOpen] = useState(false);
   const { key, rec, prev, save: persist, sodAt } = useLog(personId, kind, date);
   const saved = rec.entries ?? [];
   const blocks = plan ?? (kind === 'day' ? (rec as ReturnType<typeof emptyDaily>).plan : []);
@@ -203,6 +212,7 @@ export default function DayTaskLog({ personId, date, plan, extra, readOnly, kind
           {rec.entriesDoneAt
             ? <span data-testid="done-time"><Chip tone="lavender"><Send size={11} /> {kind === 'day' ? 'End of day' : 'End of week'} {kind === 'day' ? hhmm(rec.entriesDoneAt) : dayHhmm(rec.entriesDoneAt)}</Chip></span>
             : rec.entriesAt && <Chip tone="grey">{kind === 'day' ? 'End of day' : 'End of week'} not sent</Chip>}
+          {!readOnly && <button aria-label="Task list settings" title="Choose what shows in the task dropdown" data-testid="task-menu-settings" className="focus-ring rounded-lg border border-line p-1.5 text-muted hover:bg-surface-2 hover:text-ink" onClick={() => setMenuOpen(true)}><Settings2 size={15} /></button>}
           {!readOnly && locked && <Btn tone="ghost" className="border border-line" onClick={() => setEditing(true)}><Pencil size={13} /> Update</Btn>}
           {!readOnly && (
             <span title={sendHint} data-testid="send-eod-wrap">
@@ -216,7 +226,7 @@ export default function DayTaskLog({ personId, date, plan, extra, readOnly, kind
 
       <div className="space-y-4 p-4">
         {groups.map(({ project, pid, planned, name, extra }) => {
-          const opts = optionsFor(project);
+          const opts = menuFor(project, myMenu);
           const mine = list.filter((e) => e.projectId === pid);
           const est = mine.reduce((a, e) => a + e.estMin, 0);
           const act = mine.reduce((a, e) => a + (e.actualMin ?? 0), 0);
@@ -269,6 +279,11 @@ export default function DayTaskLog({ personId, date, plan, extra, readOnly, kind
                       return (
                         <tr key={e.id} data-entry={e.id} className="border-t border-line align-middle">
                           <td className="px-3 py-2">
+                            {(e.taskId || e.carried) && (
+                              <span className="mb-1 flex flex-wrap gap-1">
+                                {e.carried ? <span className="rounded bg-butter px-1.5 py-px text-[10px] font-bold text-butter-ink">From yesterday's tasks</span> : <span className="rounded bg-sky px-1.5 py-px text-[10px] font-bold text-sky-ink">Assigned</span>}
+                              </span>
+                            )}
                             {!edit ? <span className="font-medium">{entryName(e, project)}{e.desc && <span className="block text-xs font-normal text-muted">{e.desc}</span>}</span> : <>
                               <select aria-label="Task" className={field} value={e.task} onChange={(x) => upd(e.id, { task: x.target.value })}>
                                 <option value="">Pick a task</option>
@@ -286,7 +301,8 @@ export default function DayTaskLog({ personId, date, plan, extra, readOnly, kind
                           </td>
                           <td className="px-2 py-2">
                             {k === 'number'
-                              ? (ro ? <span className="tabular-nums">{d ?? '·'}</span> : <input aria-label="Actual" type="number" min={0} className={cx(field, 'tabular-nums')} placeholder={kind === 'week' && d != null ? String(d) : '0'} value={e.doneQty ?? ''} onChange={(x) => upd(e.id, { doneQty: n(x.target.value) })} />)
+                              ? (e.taskId ? <span className="tabular-nums" title="Fills in with the approved number">{e.doneQty ?? 0}<span className="ml-1 text-[10px] text-muted">{e.doneQty == null ? 'awaiting approval' : 'approved'}</span></span>
+                                : ro ? <span className="tabular-nums">{d ?? '·'}</span> : <input aria-label="Actual" type="number" min={0} className={cx(field, 'tabular-nums')} placeholder={kind === 'week' && d != null ? String(d) : '0'} value={e.doneQty ?? ''} onChange={(x) => upd(e.id, { doneQty: n(x.target.value) })} />)
                               : k === 'milestone'
                                 ? <select aria-label="Actual" disabled={ro} className={cx(field, 'font-medium', STATUS_TONE[e.status ?? 'Not started'])} value={e.status ?? 'Not started'} onChange={(x) => upd(e.id, { status: x.target.value as MilestoneStatus })}>
                                     {MILESTONE_STATUS.map((st) => <option key={st} value={st}>{st}</option>)}
@@ -348,7 +364,45 @@ export default function DayTaskLog({ personId, date, plan, extra, readOnly, kind
           )}
         </div>
       )}
+      {!readOnly && <TaskMenuSettings personId={personId} open={menuOpen} onClose={() => setMenuOpen(false)} />}
     </Card>
+  );
+}
+
+/** Settings for the daily update's task dropdown: hide options you don't use and add your own. */
+function TaskMenuSettings({ personId, open, onClose }: { personId: string; open: boolean; onClose: () => void }) {
+  const { profiles, setProfile } = useStore();
+  const menu = profiles[personId]?.taskMenu ?? { hidden: [], extra: [] };
+  const [name, setName] = useState('');
+  const save = (m: { hidden: string[]; extra: string[] }) => setProfile(personId, { taskMenu: m });
+  const toggle = (id: string) => save({ ...menu, hidden: menu.hidden.includes(id) ? menu.hidden.filter((x) => x !== id) : [...menu.hidden, id] });
+  const add = () => {
+    const n = name.trim();
+    if (!n) return;
+    if (menu.extra.some((x) => x.toLowerCase() === n.toLowerCase()) || TASK_TYPES.some((t) => t.name.toLowerCase() === n.toLowerCase())) { toast({ title: `"${n}" is already in the list`, tone: 'info' }); return; }
+    save({ ...menu, extra: [...menu.extra, n] });
+    setName('');
+  };
+  const row = (id: string, label: string, mine: boolean) => (
+    <li key={id} className="flex items-center gap-2 py-1.5 text-sm">
+      <input type="checkbox" aria-label={`Show ${label}`} className="h-4 w-4" checked={!menu.hidden.includes(id)} onChange={() => toggle(id)} />
+      <span className={cx('flex-1', menu.hidden.includes(id) && 'text-muted line-through')}>{label}</span>
+      {mine && <button aria-label={`Delete ${label}`} className="rounded p-1 text-muted hover:text-coral-ink" onClick={() => save({ hidden: menu.hidden.filter((x) => x !== id), extra: menu.extra.filter((x) => x !== label) })}><Trash2 size={13} /></button>}
+    </li>
+  );
+  return (
+    <Modal open={open} onClose={onClose} title="Task dropdown" description="Choose what shows when you add a task. Project tasks always show." size="sm" footer={<Btn onClick={onClose}>Done</Btn>}>
+      <div data-testid="task-menu">
+        <ul className="divide-y divide-line">
+          {TASK_TYPES.map((t) => row(t.id, t.name, false))}
+          {menu.extra.map((n) => row(`${MY}${n}`, n, true))}
+        </ul>
+        <div className="mt-3 flex gap-2">
+          <input aria-label="New task option" className="focus-ring flex-1 rounded-lg border border-line bg-surface px-2 py-1.5 text-sm" placeholder="Add your own, e.g. Client call" value={name} onChange={(e) => setName(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && add()} />
+          <Btn tone="soft" onClick={add}><Plus size={13} /> Add</Btn>
+        </div>
+      </div>
+    </Modal>
   );
 }
 
@@ -434,7 +488,11 @@ const WEEK_EDIT_EVENT = 'ls-edit-week';
  */
 export const mergeKey = (e: TaskEntry) => `${e.projectId}|${e.task}|${(e.custom ?? '').trim().toLowerCase()}|${e.kind ?? 'number'}`;
 export function mergeWeek(personId: string, mon: string, daily: ReturnType<typeof useStore.getState>['daily'], extra: TaskEntry[] = [], overrides: Record<string, { qty?: number; doneQty?: number; status?: MilestoneStatus; actualText?: string; targetText?: string }> = {}): TaskEntry[] {
-  const rows = [...[0, 1, 2, 3, 4].flatMap((i) => daily[`${personId}|${addDays(mon, i)}`]?.entries ?? []), ...extra];
+  const all = [...[0, 1, 2, 3, 4].flatMap((i) => daily[`${personId}|${addDays(mon, i)}`]?.entries ?? []), ...extra];
+  // A task carried over to the next day is the same work: count only its latest row.
+  const lastFor = new Map<string, number>();
+  all.forEach((e, i) => { if (e.taskId) lastFor.set(e.taskId, i); });
+  const rows = all.filter((e, i) => !e.taskId || lastFor.get(e.taskId) === i);
   const out = new Map<string, TaskEntry>();
   rows.forEach((e) => {
     const k = mergeKey(e);
@@ -530,7 +588,7 @@ function TextCell({ value, onSave, label }: { value: string; onSave: (v: string)
 
 /** One simple row to add something to the week: project, task, target and achieved, then Add. Same task adds to its row. */
 function WeekAddRow({ personId, mon }: { personId: string; mon: string }) {
-  const { projects, weekly, saveWeekly } = useStore();
+  const { projects, weekly, saveWeekly, profiles } = useStore();
   const mine = projects.filter((p) => p.status === 'active' && (p.pmId === personId || p.teamIds.includes(personId) || p.admins?.includes(personId)));
   const list = mine.length ? mine : projects.filter((p) => p.status === 'active');
   const [pid, setPid] = useState(list[0]?.id ?? '');
@@ -542,7 +600,7 @@ function WeekAddRow({ personId, mon }: { personId: string; mon: string }) {
   const [tText, setTText] = useState('');
   const [aText, setAText] = useState('');
   const [status, setStatus] = useState<MilestoneStatus>('Not started');
-  const opts = optionsFor(projects.find((p) => p.id === pid));
+  const opts = menuFor(projects.find((p) => p.id === pid), profiles[personId]?.taskMenu);
   const field = 'focus-ring rounded-lg border border-line bg-surface px-2 py-1.5 text-sm text-ink';
   const add = () => {
     if (!task) { toast({ title: 'Pick a task', tone: 'info' }); return; }

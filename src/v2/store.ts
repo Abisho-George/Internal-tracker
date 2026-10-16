@@ -6,6 +6,7 @@ import {
   type BinnedPeriod, type Counts, type CustomStandard, type CustomWeek, type TextTarget, type Metric, type Project, type Task, type TaskEvent,
 } from './data';
 import { daySnapshot, weekSnapshot } from './analytics';
+import { toItems, toPlan } from './plan';
 
 export interface Notice { id: string; to: string; text: string; at: string; read: boolean; kind?: 'chat' | 'task' | 'project' }
 /** Anonymous chat: conversations know members; messages carry only an alias. */
@@ -31,6 +32,8 @@ export interface Profile {
   lunch?: Lunch;
   /** Leave days (one entry per day). */
   leaves?: Leave[];
+  /** Daily update task dropdown: built-in options hidden, and their own extra options. */
+  taskMenu?: { hidden: string[]; extra: string[] };
 }
 export interface Leave { date: string; kind: 'full' | 'half'; note?: string }
 export interface Lunch { start: string; end: string; locked?: boolean }
@@ -143,6 +146,8 @@ export interface TaskEntry {
   id: string; projectId: string; task: string; custom?: string; desc: string; estMin: number; actualMin?: number;
   /** Target quantity and how many got done (left blank on a weekly row, it adds up from that week's daily rows). */
   qty?: number; doneQty?: number;
+  /** The assigned task this row came from (its achieved number is what was approved), and whether it carried over from an earlier day. */
+  taskId?: string; carried?: boolean;
   /** What kind of target: a number (default), a milestone with a status, or free text. */
   kind?: EntryKind; targetText?: string; actualText?: string; status?: MilestoneStatus;
   achieved: string; remarks: string;
@@ -181,7 +186,7 @@ interface Actions {
   saveDaily: (personId: string, date: string, patch: Partial<DailyUpdate>) => void;
   /** Saving with eowAt freezes eowSnapshot. */
   saveWeekly: (personId: string, weekStart: string, patch: Partial<WeeklyUpdate>) => void;
-  updateProject: (projectId: string, patch: Partial<Pick<Project, 'name' | 'client' | 'description' | 'startDate' | 'endDate' | 'hours' | 'standards'>> & { customStandards?: CustomStandardInput[] }) => void;
+  updateProject: (projectId: string, patch: Partial<Pick<Project, 'name' | 'client' | 'description' | 'startDate' | 'endDate' | 'hours' | 'standards' | 'typeMinutes' | 'typesOff'>> & { customStandards?: CustomStandardInput[] }) => void;
   setWeekValue: (projectId: string, metric: string, base: number) => void;
   /** Save several of this week's manual numbers at once (same meaning as setWeekValue's base). */
   setWeekValues: (projectId: string, bases: Counts) => void;
@@ -199,7 +204,7 @@ interface Actions {
   postUpdate: (projectId: string, text: string) => void;
   proposeProject: (p: {
     name: string; client: string; description: string; startDate: string; endDate: string; hours: Record<string, number>;
-    standards?: Project['standards']; customStandards?: CustomStandardInput[]; admins?: string[]; weekTarget?: Counts; weekPlans?: Record<string, Counts>;
+    standards?: Project['standards']; typeMinutes?: Record<string, number>; typesOff?: string[]; customStandards?: CustomStandardInput[]; admins?: string[]; weekTarget?: Counts; weekPlans?: Record<string, Counts>;
   }) => string;
   decideProject: (id: string, approve: boolean) => void;
   // Project admins and handover (owner or management only).
@@ -238,6 +243,8 @@ interface Actions {
   createConv: (name: string, memberIds: string[], group: boolean) => string;
   send: (convId: string, text: string) => void;
   reset: () => void;
+  /** Bring the person's assigned and carried-over tasks into their daily update for a date. */
+  syncDay: (personId: string, date: string) => void;
   saveSheet: (key: string, sheet: Sheet) => void;
 }
 
@@ -527,7 +534,8 @@ function seedEntries(projects: Project[], daily: Record<string, DailyUpdate>, we
   const REMARKS = ['', '', 'Smooth', 'List quality was low', 'Client asked for changes', 'Carried the rest to tomorrow', 'Faster than planned', 'CRM was slow'];
   const team = PEOPLE.filter((x) => x.role === 'resource' || x.role === 'pm').map((x) => x.id);
   const nowIso = new Date().toISOString();
-  const days = [...pastWorkingDays(12, day(0)), ...(isWorkingDay(day(0)) ? [day(0)] : [])];
+  // Today's rows come from the tasks assigned for today (see withAssigned), so only past days get sample rows.
+  const days = pastWorkingDays(12, day(0));
   const mkId = (k: string) => `se-${k}-${Math.floor(rnd() * 1e9).toString(36)}`;
   const pickRows = (pid: string, minutes: number, k: string, past: boolean): TaskEntry[] => {
     const n = minutes >= 240 ? 3 : minutes >= 120 ? 2 : 1;
@@ -584,6 +592,36 @@ function seedEntries(projects: Project[], daily: Record<string, DailyUpdate>, we
       weekly[key] = { ...rec, entries: [], entriesDoneAt: w < 0 ? new Date(`${addDays(mon, 4)}T18:15:00`).toISOString() : undefined, entriesAt: new Date(`${mon}T10:30:00`).toISOString() <= nowIso ? new Date(`${mon}T10:30:00`).toISOString() : undefined };
     });
   });
+}
+
+/** The daily update's task key for an assigned task. */
+const entryTask = (t: Task): { task: string; custom?: string } =>
+  t.typeId !== 'custom' ? { task: t.typeId } : t.customStandardId ? { task: `std:${t.customStandardId}` } : { task: '__custom', custom: t.customName || t.title };
+
+/**
+ * Puts a person's assigned tasks into their daily update for a date: one task row each (linked to the task),
+ * and a time block for any project that has none yet. On today, unfinished tasks from earlier days come along
+ * marked as carried over. Days whose end of day was sent are left alone. Returns null when nothing changes.
+ */
+export function withAssigned(rec: DailyUpdate | undefined, tasks: Task[], personId: string, date: string, lunch: Lunch): DailyUpdate | null {
+  const base = rec ?? emptyDaily();
+  if (base.entriesDoneAt || base.eodAt) return null;
+  const isToday = date === day(0);
+  const mine = tasks.filter((t) => t.assigneeId === personId && !t.adhoc && !t.historic && (t.date === date || (isToday && t.date < date && t.status !== 'done' && t.status !== 'in_review')));
+  const have = new Set((base.entries ?? []).map((e) => e.taskId).filter(Boolean));
+  const fresh = mine.filter((t) => !have.has(t.id));
+  if (!fresh.length) return null;
+  const rows: TaskEntry[] = fresh.map((t) => ({
+    id: `tk-${t.id}`, projectId: t.projectId, ...entryTask(t), desc: t.title, qty: t.qty, estMin: t.targetMinutes, kind: 'number',
+    doneQty: t.status === 'done' ? t.doneQty : undefined, achieved: '', remarks: '', taskId: t.id, carried: t.date < date,
+  }));
+  // A block for every project that has new tasks but no time in the plan yet.
+  const items = toItems(base.plan);
+  const planned = new Set(items.map((i) => i.projectId));
+  const need = new Map<string, number>();
+  rows.forEach((r) => { if (!planned.has(r.projectId)) need.set(r.projectId, (need.get(r.projectId) ?? 0) + r.estMin); });
+  const plan = need.size ? toPlan([...items, ...[...need].map(([pid, m]) => ({ id: `ab-${pid}-${date}`, projectId: pid, minutes: Math.max(30, Math.ceil(m / 15) * 15) }))], lunch) : base.plan;
+  return { ...base, plan, entries: [...(base.entries ?? []), ...rows] };
 }
 
 function seed(): Data {
@@ -706,6 +744,15 @@ export const useStore = create<Data & Actions>()(
         const u = /^https?:\/\//i.test(x) ? x : `https://${x}`;
         try { return new URL(u).href; } catch { throw new Error(`"${x}" does not look like a link.`); }
       });
+      /** After approval, the daily rows linked to a task show only the approved number (and the approved quantity as target when part-approved). */
+      const setLinkedDone = (taskId: string, done: number, qty?: number) => set((s) => {
+        const daily = { ...s.daily };
+        Object.entries(daily).forEach(([k, d]) => {
+          if (!d.entries?.some((e) => e.taskId === taskId)) return;
+          daily[k] = { ...d, entries: d.entries.map((e) => (e.taskId === taskId ? { ...e, doneQty: done, ...(qty != null ? { qty } : {}) } : e)) };
+        });
+        return { daily };
+      });
       const makeTask = (a: AssignInput, priority: boolean): Task => {
         const me = get().me;
         if (!a.assigneeId) throw new Error('Pick who the task is for.');
@@ -790,6 +837,7 @@ export const useStore = create<Data & Actions>()(
           const t = task(id);
           const at = iso();
           patch(id, { status: 'done', approvedAt: at, reviews: [...t.reviews, { by: get().me, verdict: 'approved', at }], history: [...(t.history ?? []), { at, by: get().me, action: 'approved' }] });
+          setLinkedDone(id, t.doneQty ?? t.qty);
           notify(t.assigneeId, `${first(get().me)} approved ${t.title} ✓`);
         },
         approvePart: (id, approvedQty, note) => {
@@ -817,6 +865,7 @@ export const useStore = create<Data & Actions>()(
             history: [...(t.history ?? []), { at, by: me, action: 'feedback', note: `${rest} of ${t.qty} need rework: ${note.trim()}` }],
           };
           set((s) => ({ tasks: [rework, ...s.tasks] }));
+          setLinkedDone(id, a, a);
           notify(t.assigneeId, `${first(me)} approved ${a} of ${t.qty} on ${t.title}. ${rest} need rework: ${note.trim()}`);
         },
         sendBack: (id, text) => {
@@ -836,6 +885,7 @@ export const useStore = create<Data & Actions>()(
           // Anything from a manager or founder is automatically a priority.
           const t = makeTask(a, isLeadRole(roleOf(me)));
           set((s) => ({ tasks: [t, ...s.tasks] }));
+          get().syncDay(t.assigneeId, t.date);
           notify(a.assigneeId, `${first(me)} gave you ${t.priority ? 'a priority task' : 'a task'}: ${t.title}`);
         },
         assignMany: (items) => {
@@ -843,6 +893,7 @@ export const useStore = create<Data & Actions>()(
           const me = get().me;
           const made: Task[] = items.map((a) => makeTask(a, !!a.priority));
           set((s) => ({ tasks: [...made, ...s.tasks] }));
+          [...new Set(made.map((t) => `${t.assigneeId}|${t.date}`))].forEach((k) => { const [who, d] = k.split('|'); get().syncDay(who, d); });
           const by = new Map<string, Task[]>();
           made.forEach((t) => by.set(t.assigneeId, [...(by.get(t.assigneeId) ?? []), t]));
           by.forEach((list, who) => {
@@ -1034,7 +1085,7 @@ export const useStore = create<Data & Actions>()(
           set((s) => ({
             projects: [...s.projects, {
               id, name: p.name.trim(), client: p.client.trim() || p.name.trim(), description: p.description.trim(), pmId: me, admins,
-              status: lead ? 'active' : 'pending', teamIds, startDate: p.startDate, endDate: p.endDate, hours, standards: p.standards, customStandards,
+              status: lead ? 'active' : 'pending', teamIds, startDate: p.startDate, endDate: p.endDate, hours, standards: p.standards, typeMinutes: p.typeMinutes, typesOff: p.typesOff, customStandards,
               metrics: METRICS.map((m) => ({ ...m })), weekTarget: p.weekTarget ? cleanCounts(p.weekTarget) : { ...ZERO }, monthTarget: { ...ZERO }, weekPlans,
               weekLocked: false, monthLocked: false, week: { ...ZERO }, month: { ...ZERO }, meetings: [], pastWeeks: [], pastMonths: [], updates: [], finalized: {},
             }],
@@ -1252,12 +1303,18 @@ export const useStore = create<Data & Actions>()(
           if (conv.memberIds.length <= 6) conv.memberIds.filter((m) => m !== s.me).forEach((m) => notify(m, `New anonymous message in ${conv.group ? conv.name : 'a private chat'}`, 'chat'));
         },
         saveSheet: (key, sheet) => set((st) => ({ sheets: { ...st.sheets, [key]: sheet } })),
+        syncDay: (personId, date) => {
+          const s = get();
+          const key = `${personId}|${date}`;
+          const next = withAssigned(s.daily[key], s.tasks, personId, date, lunchOf(s.profiles, personId));
+          if (next) set((st) => ({ daily: { ...st.daily, [key]: next } }));
+        },
         reset: () => set({ ...seed(), me: get().me }),
       };
     },
     {
       name: 'ls-tracker-v2',
-      version: 18,
+      version: 19,
       // Old or unreadable saved data falls back to a fresh demo instead of crashing.
       migrate: () => seed() as never,
       merge: (persisted, current) => {
@@ -1320,7 +1377,7 @@ export function projectCounts(p: Project, tasks: Task[], daily: Record<string, D
   const [from, to] = periodRange(period);
   const auto: Record<string, number> = {};
   const add = (k: string, v: number) => { auto[k] = (auto[k] ?? 0) + v; };
-  tasks.filter((t) => !t.historic && t.projectId === p.id && t.date >= from && t.date < to && (t.status === 'done' || t.status === 'in_review') && t.doneQty)
+  tasks.filter((t) => !t.historic && t.projectId === p.id && t.date >= from && t.date < to && t.status === 'done' && t.doneQty)
     .forEach((t) => (TASK_FEEDS[t.typeId] ?? []).forEach((k) => add(k, t.doneQty!)));
   Object.entries(daily).forEach(([key, d]) => {
     const date = key.split('|')[1];

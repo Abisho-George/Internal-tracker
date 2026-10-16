@@ -54,6 +54,8 @@ export default function DailyUpdate() {
   const [editSod, setEditSod] = useState(false);
   // Reload the form when switching person or date.
   useEffect(() => {
+    // Assigned tasks (and today, unfinished ones from earlier days) drop into the daily update with a time block.
+    useStore.getState().syncDay(me, date);
     const d = useStore.getState().daily[`${me}|${date}`] ?? emptyDaily();
     setEditSod(false);
     setPlan(d.plan); setExtra(d.extra ?? []); setSodCustom(d.sodCustom ?? []);
