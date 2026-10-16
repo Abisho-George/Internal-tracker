@@ -25,10 +25,10 @@ const optionsFor = (p?: Project) => [...TASK_TYPES.map((t) => ({ id: t.id, name:
 export const entryName = (e: TaskEntry, p?: Project) => (e.task === CUSTOM ? e.custom || 'Custom task' : e.task.startsWith(MY) ? e.task.slice(MY.length) : optionsFor(p).find((o) => o.id === e.task)?.name ?? e.task);
 /** Options a person picks from in the daily update: the project's task types (minus ones the project removed), their own extras, minus what they hid. */
 const MY = 'my:';
-export function menuFor(p: Project | undefined, menu?: { hidden: string[]; extra: string[] }) {
+export function menuFor(p: Project | undefined, menu?: { hidden: string[]; extra: string[]; removed?: string[] }) {
   const base = [...typesFor(p).map((t) => ({ id: t.id, name: t.name })), ...(p?.customStandards ?? []).map((c) => ({ id: `std:${c.id}`, name: c.name }))];
   const mine = (menu?.extra ?? []).map((n) => ({ id: `${MY}${n}`, name: n }));
-  return [...base, ...mine].filter((o) => !menu?.hidden.includes(o.id));
+  return [...base, ...mine].filter((o) => !menu?.hidden.includes(o.id) && !menu?.removed?.includes(o.id));
 }
 const sameTask = (a: TaskEntry, b: TaskEntry) => a.projectId === b.projectId && a.task === b.task && (a.task !== CUSTOM || (a.custom ?? '').trim().toLowerCase() === (b.custom ?? '').trim().toLowerCase());
 const STATUS_TONE: Record<MilestoneStatus, string> = { 'Not started': '', 'In progress': '!bg-sky/50 !text-sky-ink', Completed: '!bg-mint/60 !text-mint-ink', Blocked: '!bg-coral/60 !text-coral-ink' };
@@ -372,9 +372,10 @@ export default function DayTaskLog({ personId, date, plan, extra, readOnly, kind
 /** Settings for the daily update's task dropdown: hide options you don't use and add your own. */
 function TaskMenuSettings({ personId, open, onClose }: { personId: string; open: boolean; onClose: () => void }) {
   const { profiles, setProfile } = useStore();
-  const menu = profiles[personId]?.taskMenu ?? { hidden: [], extra: [] };
+  const menu = { hidden: [] as string[], extra: [] as string[], removed: [] as string[], ...profiles[personId]?.taskMenu };
   const [name, setName] = useState('');
-  const save = (m: { hidden: string[]; extra: string[] }) => setProfile(personId, { taskMenu: m });
+  const save = (m: Partial<typeof menu>) => setProfile(personId, { taskMenu: { ...menu, ...m } });
+  const [confirmDel, setConfirmDel] = useState<string | null>(null);
   const toggle = (id: string) => save({ ...menu, hidden: menu.hidden.includes(id) ? menu.hidden.filter((x) => x !== id) : [...menu.hidden, id] });
   const add = () => {
     const n = name.trim();
@@ -387,16 +388,35 @@ function TaskMenuSettings({ personId, open, onClose }: { personId: string; open:
     <li key={id} className="flex items-center gap-2 py-1.5 text-sm">
       <input type="checkbox" aria-label={`Show ${label}`} className="h-4 w-4" checked={!menu.hidden.includes(id)} onChange={() => toggle(id)} />
       <span className={cx('flex-1', menu.hidden.includes(id) && 'text-muted line-through')}>{label}</span>
-      {mine && <button aria-label={`Delete ${label}`} className="rounded p-1 text-muted hover:text-coral-ink" onClick={() => save({ hidden: menu.hidden.filter((x) => x !== id), extra: menu.extra.filter((x) => x !== label) })}><Trash2 size={13} /></button>}
+      {confirmDel === id ? (
+        <span className="flex items-center gap-1 text-xs"><span className="font-semibold text-coral-ink">Delete?</span>
+          <button className="rounded px-1.5 py-0.5 text-muted hover:bg-surface-2" onClick={() => setConfirmDel(null)}>No</button>
+          <button className="rounded bg-coral-strong px-1.5 py-0.5 font-semibold text-white" onClick={() => {
+            setConfirmDel(null);
+            if (mine) save({ hidden: menu.hidden.filter((x) => x !== id), extra: menu.extra.filter((x) => x !== label) });
+            else save({ hidden: menu.hidden.filter((x) => x !== id), removed: [...menu.removed, id] });
+            toast({ title: `${label} deleted from your list`, tone: 'info' });
+          }}>Yes</button>
+        </span>
+      ) : <button aria-label={`Delete ${label}`} title="Delete from the list" className="rounded p-1 text-muted hover:text-coral-ink" onClick={() => setConfirmDel(id)}><Trash2 size={13} /></button>}
     </li>
   );
   return (
     <Modal open={open} onClose={onClose} title="Task dropdown" description="Choose what shows when you add a task. Project tasks always show." size="sm" footer={<Btn onClick={onClose}>Done</Btn>}>
       <div data-testid="task-menu">
         <ul className="divide-y divide-line">
-          {TASK_TYPES.map((t) => row(t.id, t.name, false))}
+          {TASK_TYPES.filter((t) => !menu.removed.includes(t.id)).map((t) => row(t.id, t.name, false))}
           {menu.extra.map((n) => row(`${MY}${n}`, n, true))}
         </ul>
+        {menu.removed.length > 0 && (
+          <div className="mt-2 flex flex-wrap items-center gap-1.5 text-xs" data-testid="menu-removed">
+            <span className="text-muted">Deleted:</span>
+            {menu.removed.map((id) => {
+              const t = TASK_TYPES.find((x) => x.id === id);
+              return t ? <button key={id} className="inline-flex items-center gap-1 rounded-full border border-line px-2 py-0.5 font-semibold text-accent-ink hover:bg-surface-2" onClick={() => save({ removed: menu.removed.filter((x) => x !== id) })}><Plus size={11} /> {t.name}</button> : null;
+            })}
+          </div>
+        )}
         <div className="mt-3 flex gap-2">
           <input aria-label="New task option" className="focus-ring flex-1 rounded-lg border border-line bg-surface px-2 py-1.5 text-sm" placeholder="Add your own, e.g. Client call" value={name} onChange={(e) => setName(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && add()} />
           <Btn tone="soft" onClick={add}><Plus size={13} /> Add</Btn>

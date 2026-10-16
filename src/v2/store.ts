@@ -33,7 +33,7 @@ export interface Profile {
   /** Leave days (one entry per day). */
   leaves?: Leave[];
   /** Daily update task dropdown: built-in options hidden, and their own extra options. */
-  taskMenu?: { hidden: string[]; extra: string[] };
+  taskMenu?: { hidden: string[]; extra: string[]; removed?: string[] };
 }
 export interface Leave { date: string; kind: 'full' | 'half'; note?: string }
 export interface Lunch { start: string; end: string; locked?: boolean }
