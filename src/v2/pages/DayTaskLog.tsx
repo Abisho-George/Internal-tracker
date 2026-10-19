@@ -478,32 +478,47 @@ export function TargetsProgress({ personId, date, kind, editable }: { personId: 
         const gname = groupName(pid, projects);
         const s = sum(rows.filter((e) => tgt(e) > 0));
         return (
-          <div key={pid} className="rounded-lg bg-surface-2/40 p-2" style={{ borderLeft: `4px solid ${p ? colorOf(projects, pid) : '#64748B'}` }}>
-            <p className="mb-1 flex items-center justify-between text-xs font-semibold"><span>{gname}</span><span className="tabular-nums">{s.d}/{s.t} · {pct(s.d, s.t)}%</span></p>
-            <ul className="space-y-1">
+          <div key={pid} className="rounded-lg bg-surface-2/40 px-3 py-2" style={{ borderLeft: `4px solid ${p ? colorOf(projects, pid) : '#64748B'}` }}>
+            <p className="mb-2 flex items-center justify-between gap-2 text-sm font-semibold"><span>{gname}</span>
+              <span className="text-xs font-semibold tabular-nums text-muted">{s.t ? `${s.d}/${s.t} · ${pct(s.d, s.t)}%` : `${rows.length} task${rows.length === 1 ? '' : 's'}`}</span></p>
+            <ul className="divide-y divide-line/70">
               {rows.map((e) => {
                 const d = done(e);
                 const t = tgt(e);
+                const k = e.kind ?? 'number';
+                const name = entryName(e, p);
+                const sub = k === 'number' ? e.desc : e.targetText || e.desc;
+                const stTone = e.status === 'Completed' ? 'mint' : e.status === 'Blocked' ? 'coral' : e.status === 'In progress' ? 'sky' : 'grey';
                 return (
-                  <li key={e.id} className={cx('grid items-center gap-2 text-xs', editable ? 'grid-cols-[minmax(0,1fr)_8.5rem_minmax(4rem,8rem)_2.5rem]' : 'grid-cols-[minmax(0,1fr)_5rem_minmax(4rem,8rem)_2.5rem]')}>
-                    <span className="truncate" title={e.desc}>{entryName(e, p)}{e.desc && <span className="text-muted"> · {e.desc}</span>}</span>
-                    {editable && e.kind === 'milestone' ? (
-                      <select aria-label={`${entryName(e, p)} status`} className="focus-ring rounded-md border border-line bg-surface px-1 py-0.5 text-xs font-semibold" value={e.status ?? 'Not started'} onChange={(x) => setNum(e, { status: x.target.value as MilestoneStatus })}>
-                        {MILESTONE_STATUS.map((st) => <option key={st}>{st}</option>)}
-                      </select>
-                    ) : editable && e.kind === 'text' ? (
-                      <TextCell label={`${entryName(e, p)} actual`} value={e.actualText ?? ''} onSave={(v) => setNum(e, { actualText: v })} />
-                    ) : editable && (e.kind ?? 'number') === 'number' ? (
-                      <span className="flex items-center justify-end gap-0.5" data-edit-row={e.id}>
-                        <NumCell label={`${entryName(e, p)} achieved`} value={e.doneQty ?? 0} onSave={(v) => setNum(e, { doneQty: v })} />
-                        <span className="text-muted">/</span>
-                        <NumCell label={`${entryName(e, p)} target`} value={e.qty ?? 0} onSave={(v) => setNum(e, { qty: v })} />
-                      </span>
-                    ) : (
-                      <span className="text-right font-semibold tabular-nums">{e.kind === 'milestone' ? (e.status ?? 'Not started') : e.kind === 'text' ? (e.actualText || '·') : t ? `${d}/${t}` : d || '·'}</span>
-                    )}
-                    <Bar value={d} max={t} tone={tone(pct(d, t))} />
-                    <span className="text-right tabular-nums text-muted">{t ? `${pct(d, t)}%` : ''}</span>
+                  <li key={e.id} className="py-2 text-sm" data-progress-row={e.id}>
+                    <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                      <span className="min-w-[10rem] flex-1 font-medium">{name}</span>
+                      {editable && k === 'milestone' ? (
+                        <select aria-label={`${name} status`} className="focus-ring rounded-md border border-line bg-surface px-1.5 py-0.5 text-xs font-semibold" value={e.status ?? 'Not started'} onChange={(x) => setNum(e, { status: x.target.value as MilestoneStatus })}>
+                          {MILESTONE_STATUS.map((st) => <option key={st}>{st}</option>)}
+                        </select>
+                      ) : editable && k === 'number' ? (
+                        <span className="flex items-center gap-0.5" data-edit-row={e.id}>
+                          <NumCell label={`${name} achieved`} value={e.doneQty ?? 0} onSave={(v) => setNum(e, { doneQty: v })} />
+                          <span className="text-muted">/</span>
+                          <NumCell label={`${name} target`} value={e.qty ?? 0} onSave={(v) => setNum(e, { qty: v })} />
+                        </span>
+                      ) : k === 'milestone' ? <Chip tone={stTone}>{e.status ?? 'Not started'}</Chip>
+                        : k === 'number' ? (
+                          <span className="flex w-full items-center gap-2 sm:w-64">
+                            <b className="w-16 shrink-0 text-right tabular-nums">{t ? `${d}/${t}` : d || 0}</b>
+                            <span className="flex-1"><Bar value={d} max={t} tone={tone(pct(d, t))} /></span>
+                            <span className="w-10 shrink-0 text-right text-xs tabular-nums text-muted">{t ? `${pct(d, t)}%` : ''}</span>
+                          </span>
+                        ) : <Chip tone="lavender">Text</Chip>}
+                    </div>
+                    {k === 'text' ? (
+                      <div className="mt-1 grid gap-0.5 text-xs">
+                        {sub && <p><span className="font-semibold text-muted">Target: </span>{sub}</p>}
+                        {editable ? <TextCell label={`${name} actual`} value={e.actualText ?? ''} onSave={(v) => setNum(e, { actualText: v })} />
+                          : <p><span className="font-semibold text-muted">Done: </span>{e.actualText || <span className="text-muted">Not updated yet</span>}</p>}
+                      </div>
+                    ) : sub ? <p className="mt-0.5 text-xs text-muted">{sub}</p> : null}
                   </li>
                 );
               })}
