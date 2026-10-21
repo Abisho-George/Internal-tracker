@@ -474,36 +474,39 @@ export function TargetsProgress({ personId, date, kind, editable }: { personId: 
       </div>
       {!editable && (() => {
         const dateLabel = kind === 'day' ? fmtDay(date) : `${fmtDay(mon)} to ${fmtDay(addDays(mon, 4))}`;
-        const line = (x: string, i: number) => <li key={i} className="leading-snug">- {x}</li>;
         const th = 'border border-white/20 px-3 py-2 text-center text-xs font-bold';
+        const totalRows = list.length;
         return (
           <div className="overflow-x-auto" data-testid={`sheet-${kind}`}>
-            <table className="w-full min-w-[900px] border-collapse text-sm">
+            <table className="w-full min-w-[860px] border-collapse text-sm">
               <thead><tr className="bg-[#7B1A48] text-white">
-                <th className={th}>Date</th><th className={th}>Project</th><th className={cx(th, 'w-[30%]')}>Targets</th><th className={th}>Estimated time</th>
-                <th className={th}>Completed</th><th className={cx(th, 'w-[30%]')}>Targets achieved</th><th className={th}>Actual time taken</th>
+                <th className={th}>Date</th><th className={th}>Project</th><th className={cx(th, 'w-[32%]')}>Targets</th><th className={th}>Estimated time</th>
+                <th className={cx(th, 'w-[32%]')}>Targets achieved</th><th className={th}>Actual time taken</th>
               </tr></thead>
               <tbody>
-                {pids.map((pid, pi) => {
+                {pids.flatMap((pid, pi) => {
                   const p = projects.find((x) => x.id === pid);
                   const rows = list.filter((e) => e.projectId === pid);
-                  const targets = rows.map((e) => { const k = e.kind ?? 'number'; const n = entryName(e, p); return k === 'number' ? `${e.qty ? `${e.qty} ` : ''}${n}${e.desc && !e.desc.toLowerCase().includes(n.toLowerCase()) ? ` (${e.desc})` : ''}` : e.targetText || n; });
-                  const achieved = rows.flatMap((e) => { const k = e.kind ?? 'number'; const n = entryName(e, p); if (k === 'text') return e.actualText ? [e.actualText] : []; if (k === 'milestone') return e.status && e.status !== 'Not started' ? [`${e.targetText || n}: ${e.status}`] : []; const d = done(e); return d ? [`${d}${e.qty ? ` of ${e.qty}` : ''} ${n}`] : []; });
-                  const complete = rows.every((e) => { const k = e.kind ?? 'number'; return k === 'text' ? !!e.actualText : k === 'milestone' ? e.status === 'Completed' : done(e) >= tgt(e) && tgt(e) > 0; });
-                  const est = rows.reduce((a, e) => a + e.estMin, 0);
-                  const act = rows.reduce((a, e) => a + (e.actualMin ?? 0), 0);
-                  const td = 'border border-line px-3 py-2 align-middle';
-                  return (
-                    <tr key={pid} data-sheet-project={pid}>
-                      {pi === 0 && <td rowSpan={pids.length} className={cx(td, 'whitespace-nowrap text-center font-medium')}>{dateLabel}</td>}
-                      <td className={cx(td, 'text-center font-semibold')}>{groupName(pid, projects)}</td>
-                      <td className={td}><ul className="space-y-1.5 text-center">{targets.map(line)}</ul></td>
-                      <td className={cx(td, 'whitespace-nowrap text-center tabular-nums')}>{est ? fmtMin(est) : '·'}</td>
-                      <td className={cx(td, 'text-center')}><input type="checkbox" readOnly checked={complete} aria-label={`${groupName(pid, projects)} completed`} className="h-4 w-4 accent-[#6B7280]" /></td>
-                      <td className={td}>{achieved.length ? <ul className="space-y-1.5 text-center">{achieved.map(line)}</ul> : <p className="text-center text-xs text-muted">Not updated yet</p>}</td>
-                      <td className={cx(td, 'whitespace-nowrap text-center tabular-nums')}>{act ? fmtMin(act) : '·'}</td>
-                    </tr>
-                  );
+                  const shade = pi % 2 ? 'bg-surface-2/50' : 'bg-surface';
+                  return rows.map((e, ri) => {
+                    const k = e.kind ?? 'number';
+                    const n = entryName(e, p);
+                    const target = k === 'number' ? `${e.qty ? `${e.qty} ` : ''}${n}${e.desc && !e.desc.toLowerCase().includes(n.toLowerCase()) ? ` (${e.desc})` : ''}` : e.targetText || n;
+                    const d = done(e);
+                    const got = k === 'text' ? e.actualText : k === 'milestone' ? (e.status && e.status !== 'Not started' ? e.status : '') : d ? `${d}${e.qty ? ` of ${e.qty}` : ''} ${n}` : '';
+                    const first = ri === 0;
+                    const td = cx('border-x border-line px-3 py-2 align-middle', first ? (pi ? 'border-t-[3px] border-t-[#7B1A48]/60' : 'border-t border-t-line') : 'border-t border-t-line/60');
+                    return (
+                      <tr key={e.id} className={shade} data-sheet-project={first ? pid : undefined}>
+                        {pi === 0 && first && <td rowSpan={totalRows} className="whitespace-nowrap border border-line bg-surface px-3 py-2 text-center align-middle font-medium">{dateLabel}</td>}
+                        {first && <td rowSpan={rows.length} className={cx(td, 'text-center font-semibold')} style={{ borderLeft: `4px solid ${p ? colorOf(projects, pid) : '#64748B'}` }}>{groupName(pid, projects)}</td>}
+                        <td className={td}>{target}</td>
+                        <td className={cx(td, 'whitespace-nowrap text-center tabular-nums')}>{e.estMin ? fmtMin(e.estMin) : '·'}</td>
+                        <td className={td}>{got || <span className="text-xs text-muted">Not updated yet</span>}</td>
+                        <td className={cx(td, 'whitespace-nowrap text-center tabular-nums')}>{e.actualMin ? fmtMin(e.actualMin) : '·'}</td>
+                      </tr>
+                    );
+                  });
                 })}
               </tbody>
             </table>
