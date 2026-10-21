@@ -443,7 +443,8 @@ function TaskMenuSettings({ personId, open, onClose }: { personId: string; open:
 
 /** Targets against what got achieved (e.g. 233/322 with a percent bar), per task and per project, filled automatically. */
 export function TargetsProgress({ personId, date, kind, editable }: { personId: string; date: string; kind: LogKind; editable?: boolean }) {
-  const { projects, daily, weekly, saveWeekly } = useStore();
+  const { projects, daily, weekly, saveWeekly, profiles, setProfile } = useStore();
+  const headColor = profiles[personId]?.sheetColors?.[kind] ?? profiles[personId]?.sheetColor ?? '#7B1A48';
   const mon = weekStartOf(date);
   const list = kind === 'day' ? daily[`${personId}|${date}`]?.entries ?? [] : mergeWeek(personId, mon, daily, weekly[`${personId}|${mon}`]?.entries ?? [], weekly[`${personId}|${mon}`]?.overrides);
   const setNum = (e: TaskEntry, patch: { qty?: number; doneQty?: number; status?: MilestoneStatus; actualText?: string }) => {
@@ -470,6 +471,12 @@ export function TargetsProgress({ personId, date, kind, editable }: { personId: 
         <b className="tabular-nums" data-testid={`${kind}-progress`}>{total.d}/{total.t}</b>
         <span className="flex-1"><Bar value={total.d} max={total.t} tone={tone(pct(total.d, total.t))} /></span>
         <b className="w-10 text-right text-sm tabular-nums">{pct(total.d, total.t)}%</b>
+        {!editable && (
+          <label className="flex cursor-pointer items-center gap-1 rounded-full border border-line px-2 py-0.5 text-xs font-semibold text-muted hover:bg-surface-2" title="Table header colour">
+            <span className="h-3.5 w-3.5 rounded-full border border-line" style={{ background: headColor }} />Header
+            <input type="color" aria-label="Table header colour" className="sr-only" value={headColor} onChange={(x) => setProfile(personId, { sheetColors: { ...profiles[personId]?.sheetColors, [kind]: x.target.value } })} />
+          </label>
+        )}
         {editBtn}
       </div>
       {!editable && (() => {
@@ -479,7 +486,7 @@ export function TargetsProgress({ personId, date, kind, editable }: { personId: 
         return (
           <div className="overflow-x-auto" data-testid={`sheet-${kind}`}>
             <table className="w-full min-w-[860px] border-collapse text-sm">
-              <thead><tr className="bg-[#7B1A48] text-white">
+              <thead><tr className="text-white" style={{ background: headColor }}>
                 <th className={th}>Date</th><th className={th}>Project</th><th className={cx(th, 'w-[32%]')}>Targets</th><th className={th}>Estimated time</th>
                 <th className={cx(th, 'w-[32%]')}>Targets achieved</th><th className={th}>Actual time taken</th>
               </tr></thead>
@@ -495,9 +502,9 @@ export function TargetsProgress({ personId, date, kind, editable }: { personId: 
                     const d = done(e);
                     const got = k === 'text' ? e.actualText : k === 'milestone' ? (e.status && e.status !== 'Not started' ? e.status : '') : d ? `${d}${e.qty ? ` of ${e.qty}` : ''} ${n}` : '';
                     const first = ri === 0;
-                    const td = cx('border-x border-line px-3 py-2 align-middle', first ? (pi ? 'border-t-[3px] border-t-[#7B1A48]/60' : 'border-t border-t-line') : 'border-t border-t-line/60');
+                    const td = cx('border-x border-line px-3 py-2 align-middle', first ? (pi ? 'border-t-[3px]' : 'border-t border-t-line') : 'border-t border-t-line/60');
                     return (
-                      <tr key={e.id} className={shade} data-sheet-project={first ? pid : undefined}>
+                      <tr key={e.id} className={shade} data-sheet-project={first ? pid : undefined} style={first && pi ? { borderTop: `3px solid ${headColor}99` } : undefined}>
                         {pi === 0 && first && <td rowSpan={totalRows} className="whitespace-nowrap border border-line bg-surface px-3 py-2 text-center align-middle font-medium">{dateLabel}</td>}
                         {first && <td rowSpan={rows.length} className={cx(td, 'text-center font-semibold')} style={{ borderLeft: `4px solid ${p ? colorOf(projects, pid) : '#64748B'}` }}>{groupName(pid, projects)}</td>}
                         <td className={td}>{target}</td>

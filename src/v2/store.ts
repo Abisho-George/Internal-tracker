@@ -33,6 +33,9 @@ export interface Profile {
   /** Leave days (one entry per day). */
   leaves?: Leave[];
   /** Daily update task dropdown: built-in options hidden, and their own extra options. */
+  /** Header colour of the daily and weekly update tables. */
+  sheetColor?: string;
+  sheetColors?: { day?: string; week?: string };
   taskMenu?: { hidden: string[]; extra: string[]; removed?: string[] };
 }
 export interface Leave { date: string; kind: 'full' | 'half'; note?: string }
